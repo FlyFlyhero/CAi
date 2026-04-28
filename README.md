@@ -45,7 +45,7 @@ CC1(C)S[C@@H]2(NC(=O)*)C(=O)N2[C@H]1C(=O)O，
 ## 项目结构
 
 ```
-Drug_CAi/
+CAi_copilot/
 ├── CAi/
 │   ├── config.py                        # 全局配置（端口、LLM 参数）
 │   ├── .env                             # 本地环境变量（填写 API Key，不提交 git）
