@@ -274,6 +274,5 @@ bash tools/vina/install.sh
 | `toxicity` | `toxicity` | ✓ | `tools/toxicity/environment.yml` |
 | `rxnflow` | `rxnflow` | ✓ | `tools/rxnflow/environment.yml` + `pip install -e RxnFlow/` |
 | `reinvent4` | `reinvent4` | ✓ | `conda create python=3.10` + `pip install reinvent4`（PyPI） |
-| `drugex` | `drugex` | ✓ | `conda create python=3.10` + pip from GitHub |
 
-> **注意**：`reinvent4` 和 `drugex` 在 Docker 构建时需要访问外网（PyPI / GitHub）。若构建环境无网络，需提前打包 wheel 文件并改用本地安装。
+> **注意**：`reinvent4` 在 Docker 构建时需要访问外网（PyPI / GitHub）。若构建环境无网络，需提前打包 wheel 文件并改用本地安装。
