@@ -1,81 +1,20 @@
-# CAi 分子设计智能助手 CAi Molecule Design Copilot
+![CAiCopilot](assets/CAiCopilot.png)
+# CAi Molecule Design Copilot 
+An agentic platform for molecular generation, evaluation, and candidate prioritization.
+[English](./README.md) | [简体中文](./README_zh.md)
+## Overviews
+This agent is an integrated platform for intelligent molecular design, scaffold-based generation, de novo drug discovery, and multi-dimensional evaluation. Designed for both drug discovery researchers and computational chemists, it enables you to deploy and run complex molecular design workflows with a single command, removing the typical overhead of environment setup, model integration, and evaluation pipelines. Molecule Agent streamlines the workflow into an accessible, reproducible, and scientifically rigorous tool, saving both time and computational resources. 
 
-这是一个集分子生成、性质评估与候选筛选于一体的智能 Agent 平台，支持基于骨架的分子生成、从头分子设计、靶点导向评估、毒性预测、抗菌活性预测和可合成性分析，实现“生成—评估—筛选”的一体化流程，显著降低了复杂工作流的使用门槛。它是专门为药物发现研究人员和计算化学工作者设计，支持用户以简单命令部署并运行复杂的分子设计工作流，从而免去环境配置、模型集成以及评估流程搭建所带来的负担。这个智能助手面向药物发现与计算化学研究中的实际需求，解决了传统流程中部署复杂、工具分散、多模型衔接困难以及结果难复现等问题。
+## Why CAi?
+- One-click deployment for end-to-end molecular design workflows
+- Web-based interaction for chemical researchers
+- Integrated generation, evaluation, and screening
+- Flexible tool selection for standalone or workflow-based use
 
+## Getting started
+### 1.Setup
 
-## 核心亮点
-
-1. 简单快速部署，实现端到端分子设计
-2. 面向化学研究者的 Web 交互界面
-3. 集成式全流程分子生成、评估与筛选
-4. 灵活的工具选择与流程化组合能力
-
-## 工具说明
-| 功能类型     | 工具                                        | 函数                      | 详细说明                                                                                             |
-| -------- | ----------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 骨架约束分子生成 | RNN-based Constrained Scaffold Generation | `generate_scaffold_analogs` | 输入骨架结构，修改部分可以包括R-groups或者linking，在保留核心骨架的前提下生成结构类似的小分子。适用于先导化合物扩展、母核优化和定向类似物探索。 |
-| 骨架约束分子生成 | LibINVENT                                 | `generate_libinvent_decorations`            | 以骨架为中心生成可修饰的分子库，尤其适合围绕固定母核开展系统化 R-group 扩展和可控分子设计，并支持反应类型约束以提升分子合成可行性。|
-| 骨架约束分子生成 | Reinvent 4                                | `generate_molecules_reinvent4_libinvent`    | 更进一步，在多目标打分函数引导下，基于骨架生成具备反应约束的化学分子库。|
-| 从头分子设计   | RXNFlow                                   | `run_rxnflow_design()`                  | 不依赖固定骨架，基于目标蛋白、靶点信息或指定化学空间进行从头设计的小分子生成，适用于靶点导向药物设计与全新候选分子发现。                                   |
-| 从头分子设计   | Reinvent 4                                | `generate_molecules_reinvent4_denovo` | 在多目标打分函数引导下，实现多目标驱动的分子生成。 |            
-| 从头分子生成   | Reinvent 4                                | `generate_molecules_reinvent4_mol2mol` |接收完整分子输入并以该分子为条件，在多目标优化驱动下生成结构相似的候选分子，实现局部优化。       |
-| 逆向合成评估   | SC Score                                  | `calculate_scscore`                  | 对生成分子的结构可合成性进行评估，衡量其与已知合成模式的一致性和潜在可行性，可用于候选分子的初步可合成性筛选。                                      |
-| 亲和力性能评估  | Vina Score                                | `perform_molecular_docking_vina`                | 需要蛋白质和小分子文件作为输入，计算 docking score，用于预测分子与目标蛋白之间的结合亲和力，支持靶点导向候选分子的筛选与排序。|                       
-| ADMET性能评估  | Toxicity Prediction                       | `predict_molecule_toxicity`                    | 使用Toxcast肝细胞毒性数据对模型微调后，用于预测分子的肝细胞毒性反应风险，为早期药物筛选提供安全性参考，并且支持子结构的Shapley value 可视化分析，展示不同子结构对毒性的贡献程度。 |                                      
-| 抑菌浓度性能评估  | MIC Prediction                            | `predict_antibacterial_pmic`                         | 基于化学性质预测模型使用ChEMBL中的所有包括MIC数据的分子训练，并预测分子的最低抑菌浓度（MIC），并辅助抗菌药物设计任务中的分子排序与筛选。                                 |
-
-## 输入示范
-
-### 基于骨架的分子生成
-```text
-给定青霉素母核骨架
-CC1(C)S[C@@H]2(NC(=O)*)C(=O)N2[C@H]1C(=O)O，
-使用LibINVENT 和  RNN-based Constrained Scaffold Generation 分别生成 10 个基于骨架的小分子类似物，并按照 SC score进行排序。
-```
-### 基于靶点的从头生成
-```text
-以 HIV-1 protease 作为目标蛋白，使用 1HVR.pdb 作为目标结构文件，结合位点中心坐标为 [15.2,23.5,6.8]，调用 Rxnflow 和 Reinvent4 工具生成候选小分子，并按照 Vina score排名。
-```
-### 性能合成评估
-```text
-对前面生成的小分子计算 toxicity、MIC，用于评估分子的化学性质成药过程中可能表现出的性质。
-```
----
-
-## 项目结构
-
-```
-CAi_copilot/
-├── CAi/
-│   ├── config.py                        # 全局配置（端口、LLM 参数）
-│   ├── .env                             # 本地环境变量（填写 API Key，不提交 git）
-│   ├── main.py                          # Agent 启动入口
-│   ├── additional_tools/
-│   │   ├── __init__.py
-│   │   ├── template_tools.py            # Agent 可调用的工具函数
-│   │   └── server/
-│   │       ├── app.py                   # 工具执行后端（FastAPI）
-│   │       ├── job_manager.py           # Job 沙盒管理
-│   │       ├── install_all.sh           # 一键安装所有工具 conda 环境
-│   │       └── tools/                  # 各工具目录（config.json + run.py）
-│   └── CAi_agent/
-│       ├── agent.py                     # A1pro Agent 类
-│       ├── ui.py                        # Gradio UI
-│       └── skills/                      # Agent 技能文件
-└── base_CAi/                            # 基础 Agent 框架
-```
-
----
-## 推荐配置
-- 内存：至少 16GB，推荐 32GB+
-- GPU：显存至少 8GB
-- 存储：至少100GB 可用空间（包含工具环境和模型权重）
-- 大模型：免费开源大模型表现一般，建议使用付费版本，例如Qwen3.6, Gemini-3-flash, Claude sonnet4.5
-## 快速开始
-
-### 第一步：配置环境变量
-
-在 `CAi/` 目录下创建 `.env` 文件：
+Create a file named `.env` in the directory `CAi/`：
 
 ```bash
 # CAi/.env
@@ -87,7 +26,7 @@ TOOL_SERVER_HOST=0.0.0.0
 TOOL_SERVER_PORT=8001
 ```
 
-### 第二步：安装基础依赖
+### 2. Install dependencies
 
 ```bash
 conda create -n CAi python==3.11
@@ -95,73 +34,129 @@ conda activate CAi
 pip install -e .
 ```
 
-### 第三步：安装工具 conda 环境
+### 3. Install tool environments
 
-每个计算工具运行在独立的 conda 环境中。可以按需安装：
+Each tool operates within a separate Conda environment.  You can install them as needed:
 
 ```bash
 cd CAi/additional_tools/server
 
-# 安装全部工具环境（较慢）
+# Install all tool environments (may take time)
 bash install_all.sh
 
-# 只安装部分工具
+# Install selected tools only
 bash install_all.sh vina scscore toxicity
 ```
 
-### 第四步：启动工具后端服务
-
-## 在启动服务前，需要把工具的源码从我们的Google drive上下载下来，放在CAi/additional_tools/server/tools/目录下，对应的目录下解压。
-网盘地址：https://drive.google.com/drive/folders/1tjYJrMcVJnMopzbTyrf9KskvAxg2Xfin?usp=sharing
+### 4. Launch tool backend services
+Before starting the service, please download the tool source code from our [Google Drive](https://drive.google.com/drive/folders/1tjYJrMcVJnMopzbTyrf9KskvAxg2Xfin?usp=sharing), place and extract it into the directory CAi/additional_tools/server/tools/.
 
 ```bash
-# 在 CAi/ 目录下运行
+# Run inside 'CAi/'
 python additional_tools/server/app.py
+
+# After startup, the service listens on http://0.0.0.0:8001. Available ndpoints:
+# GET /tools — List all loaded tools
+# POST /run/{tool}/{action} — Submit a tool task
+# GET /job/{job_id} — Query task status
 ```
 
-服务启动后监听 `http://0.0.0.0:8001`，可用接口：
-- `GET  /tools`               — 列出所有已加载工具
-- `POST /run/{tool}/{action}` — 提交工具任务
-- `GET  /job/{job_id}`        — 查询任务状态
-
-
-### 第五步：启动 Agent UI
+### 5.Start the Agent UI
 
 ```bash
-# 在Drug_CAi目录下运行
+# Run in the directory 'CAi_copilot/'
 python CAi/main.py
+# To modify the LLM backbone model, update env file.
 ```
 
-或自定义模型：
-
-```python
-# CAi/main.py 中修改 llm 参数
-agent = A1pro(
-    llm="Qwen/Qwen3-32B",       # 替换为你的模型
-    source="Custom",
-    base_url=LLM_BASE_URL,
-    api_key=LLM_API_KEY,
-    auto_load_tools=True,
-)
-agent.launch_new_gradio_demo(share=False)
+## Example 
+### Scaffold-Based Analog
+```text
+Given the penicillin core scaffold
+CC1(C)S[C@@H]2(NC(=O)*)C(=O)N2[C@H]1C(=O)O,
+generate 10 scaffold-based analogs using DrugEx3, Reinvent 4, LibINVENT, and RNN-based Constrained Scaffold Generation, then rank them by SC score.
 ```
+### De Novo Design
+```text
+Using BamA as the target protein, with 7NRE.pdbqt as the target structure and [33.489, 8.39, 4.238] as the binding center coordinates, generate candidate small molecules with RXNFlow and Reinvent 4, then rank them by Vina score.
+```
+### Molecule Evaluation
+```text
+For the generated molecules, calculate toxicity、MIC to evaluate chemical features, and filter out candidates with poor safety and activity.
+```
+
+## File Structure 
+
+```
+CAi_copilot/
+├── CAi/
+│   ├── config.py                        # Global Configuration
+│   ├── .env                             # Local Environment Variables
+│   ├── main.py                          # Agent Main Function Entry
+│   ├── additional_tools/
+│   │   ├── __init__.py
+│   │   ├── template_tools.py            # Tool Functions Callable by Agent
+│   │   └── server/
+│   │       ├── app.py                   # Tool Execution Backend (FastAPI)
+│   │       ├── job_manager.py           # Job Sandbox Management
+│   │       ├── install_all.sh           # One-click Install for All Tools
+│   │       └── tools/                   # Each Tool（config.json + run.py）
+│   └── CAi_agent/
+│       ├── agent.py                     # A1pro Agent 
+│       ├── ui.py                        # Gradio UI
+│       └── skills/                      # Agent skill descriptions
+└── base_CAi/                            # basic tools 
+```
+## Tool Workflow 
+
+Tool Call Chain:
+
+```
+Agent launchs(template_tools.py)
+    │  POST /run/{tool}/{action}
+    ▼
+tool running - FastAPI (app.py)  →  JobManager
+    │  conda run -n <env> python run.py
+    │  cwd = workspace/jobs/<uuid>/
+    ▼
+tool call (run.py)  →  result.json
+    ▼
+Agent receives results
+```
+
+## Tool Description
+
+| Module Type                     | Tool                                      | Tool Function Name                      | Detailed Description                                                                                                                                                                                                                                                                                              |
+| ------------------------------- | ----------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Constrained Scaffold Generation | RNN-based Constrained Scaffold Generation | `run_constrained_scaffold_generation()` | Takes a predefined molecular scaffold as input and generates structurally related analogs while preserving the core scaffold. This tool is suitable for lead expansion, scaffold optimization, and targeted analog exploration, and can be combined with downstream evaluation modules for ranking and filtering. |
+| Constrained Scaffold Generation | Reinvent 4                                | `run_reinvent_scaffold_generation()`    | Performs scaffold-based molecular generation while preserving the core structure and exploring diverse substituent combinations and chemical space. It is well suited for scaffold-based lead optimization and target-oriented molecular design.                                                                  |
+| Constrained Scaffold Generation | LibINVENT                                 | `run_libinvent_generation()`            | Generates focused molecular libraries around a given scaffold, especially for systematic R-group expansion and controllable molecular design. This tool is useful for candidate library construction and downstream screening.                                                                                    |
+| Constrained Scaffold Generation | DrugEx3                                   | `run_drugex3_scaffold_generation()`     | Applies deep generative modeling to scaffold-conditioned molecular design, enabling diverse candidate generation from a predefined core structure. It is suitable for large-scale analog exploration and optimization.                                                                                            |
+| De Novo Molecular Design        | RXNFlow                                   | `run_rxnflow_design()`                  | Performs de novo small-molecule generation without requiring a fixed scaffold, based on a target protein, target-site information, or a specified chemical space. It is useful for target-driven drug discovery and novel candidate generation.                                                                   |
+| De Novo Molecular Design        | Reinvent 4                                | `run_reinvent_denovo_design()`          | Uses Reinvent 4 for de novo molecular generation, allowing users to explore candidate molecules that satisfy specific design objectives without relying on a predefined scaffold. It can be integrated with downstream evaluation and screening workflows.                                                        |
+| Retrosynthesis Evaluation       | SC Score                                  | `calculate_sc_score()`                  | Evaluates the structural synthesizability of generated molecules by measuring their consistency with known synthesis patterns and their potential feasibility. It can be used for early-stage filtering of candidates.                                                                                            |
+| Retrosynthesis Evaluation       | SA Score                                  | `calculate_sa_score()`                  | Estimates the synthesis difficulty and structural complexity of a molecule, helping identify candidates that may be too complex or impractical for real-world synthesis.                                                                                                                                          |
+| Multi-dimensional Evaluation    | Vina Score                                | `calculate_vina_score()`                | Computes docking scores based on protein and ligand input files to estimate protein–ligand binding affinity. This tool supports ranking and filtering in target-driven molecular design workflows.                                                                                                                |
+| Multi-dimensional Evaluation    | Toxicity Prediction                       | `predict_toxicity()`                    | Predicts hepatotoxicity risk for candidate molecules using a ChemBERTa-based model, providing an early-stage safety assessment for molecular screening.                                                                                                                                                           |
+| Multi-dimensional Evaluation    | Toxicity Shapley Visualization            | `visualize_toxicity_shapley()`          | Provides interpretability for toxicity predictions by generating Shapley value visualizations, highlighting which substructures or chemical features contribute most to the predicted toxicity.                                                                                                                   |
+| Multi-dimensional Evaluation    | MIC Prediction                            | `predict_mic()`                         | Predicts the minimum inhibitory concentration (MIC) of candidate molecules using a Chemprop-based model, supporting antibacterial activity assessment and candidate prioritization in antimicrobial design tasks.                                                                                                 |
+
 ---
 
-## 添加新工具
+## Tool Extention
 
-每个工具需要三个步骤：
+To add custom tools, follow the guidance below. Each tool requires three steps:
 
-**1. 创建工具目录**
+**1. Create Tool Dir `<your_tool>/`**
 
 ```
 additional_tools/server/tools/<your_tool>/
-├── config.json    # 声明 conda 环境、GPU 需求
-└── run.py         # 读 params.json → 计算 → 写 result.json
+├── config.json    # conda environment setup and running sources
+└── run.py         # load params.json and output result.json
 ```
 
-`config.json` 示例：
-
 ```json
+# `config.json` template
 {
   "name": "mytool",
   "conda_env": "mytool_env",
@@ -169,14 +164,15 @@ additional_tools/server/tools/<your_tool>/
 }
 ```
 
-**2. 编写 `run.py`**
+**2. Prepare the script of `run.py`**
 
 ```python
+# `run.py` template
 import json
 
 def main():
     params = json.load(open("params.json"))
-    # ... 计算逻辑 ...
+    # add the function you need here
     result = {"success": True, "summary": {...}, "results": [...]}
     with open("result.json", "w") as f:
         json.dump(result, f)
@@ -185,35 +181,39 @@ if __name__ == "__main__":
     main()
 ```
 
-**3. 在 `template_tools.py` 中注册 Agent 工具函数**
+**3. Register Agent tool functions in `template_tools.py`**
 
 ```python
+# `template_tools.py` template
 def my_tool(smiles: str) -> str:
-    """工具描述（大模型根据此决定何时调用）"""
+    """
+    Tool Description 
+    (Please describe the function call process in detail here)
+    """
     payload = {"smiles": smiles}
     result = _call_worker_api("mytool", payload)
     return json.dumps(result, ensure_ascii=False)
 ```
 
-详细开发指南见 [CAi/start.md](CAi/start.md)。
+See detailed development guide at [CAi/start.md](CAi/start.md)。
 
----
 
-## 架构说明
+## Contribution
 
-工具调用链路：
+CAi Molecule Design Copilot contributes a unified agentic workflow for molecular generation, evaluation, and candidate selection. By integrating scaffold-based design, de novo generation, synthesizability assessment, toxicity prediction, antibacterial activity prediction, and docking-based evaluation into one system, it reduces the overhead of fragmented molecular design pipelines and makes advanced workflows more accessible to drug discovery researchers.
 
-```
-Agent (template_tools.py)
-    │  POST /run/{tool}/{action}
-    ▼
-FastAPI (app.py)  →  JobManager
-    │  conda run -n <env> python run.py
-    │  cwd = workspace/jobs/<uuid>/
-    ▼
-run.py  →  result.json
-    ▼
-Agent 收到结果
-```
+The platform is currently applied to scaffold-based analog generation, target-aware de novo molecular design, and multi-objective candidate screening. Through its web-based interface and natural-language interaction, CAi enables researchers to perform molecular design experiments more efficiently, reproducibly, and with greater flexibility in tool selection and workflow composition.
 
-每个 Job 运行在独立沙盒目录，互不干扰，支持 GPU 自动分配。
+## Citation
+
+If you use this project in your research or workflow, please cite it as:
+
+```bibtex
+@misc{cai_molecule_design_copilot_2026,
+  author       = {Datalab},
+  title        = {CAi Molecule Design Copilot},
+  year         = {2026},
+  month        = Apr,
+  publisher    = {Github},
+  note         = {An agentic platform for molecular generation, evaluation, and candidate selection}
+}
