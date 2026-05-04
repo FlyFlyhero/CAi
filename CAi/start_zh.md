@@ -1,38 +1,3 @@
-# CAi 启动指南
-
-## 项目结构
-
-```
-CAi_copilot/
-├── CAi/
-│   ├── config.py                        # 全局配置（端口、LLM 参数）
-│   ├── .env                             # 本地环境变量（填写 API Key）
-│   ├── additional_tools/
-│   │   ├── __init__.py                  # 工具导出
-│   │   ├── template_tools.py            # Agent 可调用的工具函数（含服务器地址）
-│   │   └── server/
-│   │       └── app.py                   # 工具执行后端服务（FastAPI）
-│   └── CAi_agent/
-│       ├── agent.py                     # A1pro Agent 类
-│       ├── ui.py                        # Gradio UI
-│       └── launch_web_ui.py             # Web UI 启动脚本
-└── base_CAi/                            # 基础 Agent 框架
-```
-## 可用工具列表
-
-| 工具函数 | 功能 |
-|---|---|
-| `generate_scaffold_analogs` | 骨架衍生生成 |
-| `predict_molecule_toxicity` | 毒性预测 + SHAP 解释 |
-| `calculate_scscore` | 合成可行性评分（SCScore） |
-| `generate_libinvent_decorations` | Lib-INVENT 骨架修饰 |
-| `predict_antibacterial_pmic` | 抗菌活性（pMIC）预测 |
-| `generate_molecules_for_pocket` | RxnFlow 靶点口袋导向生成 |
-| `perform_molecular_docking_vina` | AutoDock Vina 分子对接 |
-| `score_molecules_reinvent` | REINVENT4 多维综合打分 |
-| `generate_molecules_reinvent` | REINVENT4 从头分子生成 |
----
-
 # 后端工具开发指南
 
 > 以 `scscore` 为例，完整介绍如何为 CAi 编写一个新的后端工具。
@@ -41,7 +6,7 @@ CAi_copilot/
 
 Agent 调用工具的完整链路如下：
 
-```
+```text
 Agent (template_tools.py)
     │  POST /run/{tool}/{action}  params: {...}
     ▼
@@ -66,7 +31,7 @@ Agent 收到结果，返回给大模型
 
 **关键设计：每个 Job 都有独立的沙盒目录**
 
-```
+```text
 additional_tools/server/workspace/jobs/
 └── <uuid>/
     ├── params.json     ← 输入参数（由 JobManager 写入）
@@ -82,7 +47,7 @@ additional_tools/server/workspace/jobs/
 
 ## 文件结构：新建一个工具需要的三个文件
 
-```
+```text
 additional_tools/server/tools/
 └── <your_tool_name>/           ← 工具目录，名字即工具 ID
     ├── config.json             ← 必需：声明环境、GPU 需求、action 映射
@@ -202,7 +167,7 @@ def main():
     try:
         params = json.load(open("params.json"))
         # ... 正常逻辑 ...
-        result = {"success": True, "summary": {...}, "results": [...]}
+        result = {"success": True, "summary": {...}, "results": [...]} 
     except Exception as e:
         # 任何异常都写入 result.json，JobManager 会识别 success=False
         result = {"success": False, "error": str(e)}
@@ -250,7 +215,7 @@ def calculate_scscore(smiles: str = None, smiles_list: list = None, model_type: 
 
 ## 完整新建工具 Checklist
 
-```
+```text
 □ 1. 在 tools/<your_tool>/ 目录下创建以下文件：
       - config.json  （填写 name / conda_env / gpu）
       - run.py       （读 params.json → 计算 → 写 result.json）

@@ -37,6 +37,6 @@ WEB_FRONTEND_PORT = int(os.getenv("WEB_FRONTEND_PORT", 3000))
 # =============================================================================
 
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-5-20250929")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://35.220.164.252:3888/v1/")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")  # 请在 .env 中填写，勿提交至 git
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://XXXXX/v1/")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")  # 请在 .env 中填写
 LLM_SOURCE = os.getenv("LLM_SOURCE", "Custom")
