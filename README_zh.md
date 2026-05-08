@@ -145,21 +145,18 @@ Agent 接收结果并继续后续流程
 ```
 
 ## 工具说明
-
-| 功能模块 | 工具 | 工具函数名 | 详细说明 |
-| --- | --- | --- | --- |
-| 骨架约束分子生成 | RNN-based Constrained Scaffold Generation | `run_constrained_scaffold_generation()` | 输入预定义分子骨架，在保留核心 scaffold 的前提下生成结构相关的小分子类似物。适用于先导化合物扩展、骨架优化与定向类似物探索，并可结合后续评估模块进行排序与筛选。 |
-| 骨架约束分子生成 | Reinvent 4 | `run_reinvent_scaffold_generation()` | 基于给定骨架进行分子生成，在保留核心结构的同时探索更丰富的取代基组合与化学空间，适合 scaffold-based lead optimization 和靶点导向分子设计。 |
-| 骨架约束分子生成 | LibINVENT | `run_libinvent_generation()` | 围绕给定骨架生成聚焦分子库，特别适合系统化的 R-group 扩展和可控分子设计，可用于候选化合物库构建与后续筛选。 |
-| 骨架约束分子生成 | DrugEx3 | `run_drugex3_scaffold_generation()` | 基于深度生成模型完成 scaffold-conditioned 分子设计，在给定核心结构条件下生成多样化候选分子，适用于大规模类似物探索与优化。 |
-| 从头分子设计 | RXNFlow | `run_rxnflow_design()` | 不依赖固定骨架，基于目标蛋白、靶点位点信息或指定化学空间进行从头小分子生成，适用于靶点导向药物设计和新分子发现。 |
-| 从头分子设计 | Reinvent 4 | `run_reinvent_denovo_design()` | 使用 Reinvent 4 开展 de novo 分子生成，支持在无预定义 scaffold 条件下探索满足特定设计目标的候选分子，并可接入后续评估与筛选流程。 |
-| 逆向合成评估 | SC Score | `calculate_sc_score()` | 评估生成分子的结构可合成性，衡量其与已知合成模式的一致性与潜在可行性，可用于早期候选分子的可合成性筛选。 |
-| 逆向合成评估 | SA Score | `calculate_sa_score()` | 估计分子的合成难度与结构复杂度，用于识别可能过于复杂或难以实际制备的候选分子。 |
-| 多维性能评估 | Vina Score | `calculate_vina_score()` | 基于蛋白质与配体输入文件计算 docking score，用于估计蛋白—配体结合亲和力，支持靶点导向分子设计中的候选排序与筛选。 |
-| 多维性能评估 | Toxicity Prediction | `predict_toxicity()` | 使用基于 ChemBERTa 的模型预测候选分子的肝细胞毒性风险，为早期分子筛选提供安全性评估参考。 |
-| 多维性能评估 | Toxicity Shapley Visualization | `visualize_toxicity_shapley()` | 为毒性预测提供可解释性分析，通过 Shapley value 可视化展示不同子结构或化学特征对毒性预测结果的贡献。 |
-| 多维性能评估 | MIC Prediction | `predict_mic()` | 使用基于 Chemprop 的模型预测候选分子的最低抑菌浓度（MIC），支持抗菌活性评估与抗菌药物设计任务中的候选优选。 |
+| 功能类型     | 工具                                        | 函数                      | 详细说明                                                                                             |
+| -------- | ----------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 骨架约束分子生成 | RNN-based Constrained Scaffold Generation | `generate_scaffold_analogs` | 输入骨架结构，修改部分可以包括R-groups或者linking，在保留核心骨架的前提下生成结构类似的小分子。适用于先导化合物扩展、母核优化和定向类似物探索。 |
+| 骨架约束分子生成 | LibINVENT                                 | `generate_libinvent_decorations`            | 以骨架为中心生成可修饰的分子库，尤其适合围绕固定母核开展系统化 R-group 扩展和可控分子设计，并支持反应类型约束以提升分子合成可行性。|
+| 骨架约束分子生成 | Reinvent 4                                | `generate_molecules_reinvent4_libinvent`    | 更进一步，在多目标打分函数引导下，基于骨架生成具备反应约束的化学分子库。|
+| 从头分子设计   | RXNFlow                                   | `run_rxnflow_design()`                  | 不依赖固定骨架，基于目标蛋白、靶点信息或指定化学空间进行从头设计的小分子生成，适用于靶点导向药物设计与全新候选分子发现。                                   |
+| 从头分子设计   | Reinvent 4                                | `generate_molecules_reinvent4_denovo` | 在多目标打分函数引导下，实现多目标驱动的分子生成。 |            
+| 从头分子生成   | Reinvent 4                                | `generate_molecules_reinvent4_mol2mol` |接收完整分子输入并以该分子为条件，在多目标优化驱动下生成结构相似的候选分子，实现局部优化。       |
+| 逆向合成评估   | SC Score                                  | `calculate_scscore`                  | 对生成分子的结构可合成性进行评估，衡量其与已知合成模式的一致性和潜在可行性，可用于候选分子的初步可合成性筛选。                                      |
+| 亲和力性能评估  | Vina Score                                | `perform_molecular_docking_vina`                | 需要蛋白质和小分子文件作为输入，计算 docking score，用于预测分子与目标蛋白之间的结合亲和力，支持靶点导向候选分子的筛选与排序。|                       
+| ADMET性能评估  | Toxicity Prediction                       | `predict_molecule_toxicity`                    | 使用Toxcast肝细胞毒性数据对模型微调后，用于预测分子的肝细胞毒性反应风险，为早期药物筛选提供安全性参考，并且支持子结构的Shapley value 可视化分析，展示不同子结构对毒性的贡献程度。 |                                      
+| 抑菌浓度性能评估  | MIC Prediction                            | `predict_antibacterial_pmic`                         | 基于化学性质预测模型使用ChEMBL中的所有包括MIC数据的分子训练，并预测分子的最低抑菌浓度（MIC），并辅助抗菌药物设计任务中的分子排序与筛选。                                 |
 
 ---
 
