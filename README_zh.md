@@ -85,23 +85,18 @@ python CAi/main.py
 ## 示例 Prompt
 
 ### 基于骨架的类似物生成
-
 ```text
 给定青霉素母核骨架
 CC1(C)S[C@@H]2(NC(=O)*)C(=O)N2[C@H]1C(=O)O，
-使用 DrugEx3、Reinvent 4、LibINVENT 和 RNN-based Constrained Scaffold Generation 生成 10 个基于骨架的小分子类似物，并按照 SC score 进行排序。
+使用LibINVENT 和  RNN-based Constrained Scaffold Generation 分别生成 10 个基于骨架的小分子类似物，并按照 SC score进行排序。
 ```
-
-### 基于靶点的从头分子设计
-
+### 基于靶点蛋白的分子从头生成
 ```text
-以 BamA 作为目标蛋白，使用 7NRE.pdbqt 作为目标结构文件，结合位点中心坐标为 [33.489, 8.39, 4.238]，调用 RXNFlow 和 Reinvent 4 生成候选小分子，并按照 Vina score 进行排序。
+以 HIV-1 protease 作为目标蛋白，使用 1HVR.pdb 作为目标结构文件，结合位点中心坐标为 [15.2,23.5,6.8]，调用 Rxnflow 和 Reinvent4 工具生成候选小分子，并按照 Vina score排名。
 ```
-
-### 分子性质评估
-
+### 分子化学性质评估
 ```text
-对生成的小分子计算 toxicity 和 MIC，用于评估候选分子的安全性与活性，并筛除表现较差的分子。
+对前面生成的小分子计算 toxicity、MIC，用于评估分子的化学性质成药过程中可能表现出的性质。
 ```
 
 ## 项目结构

@@ -72,17 +72,18 @@ python CAi/main.py
 ## Example 
 ### Scaffold-Based Analog
 ```text
-Given the penicillin core scaffold
-CC1(C)S[C@@H]2(NC(=O)*)C(=O)N2[C@H]1C(=O)O,
-generate 10 scaffold-based analogs using DrugEx3, Reinvent 4, LibINVENT, and RNN-based Constrained Scaffold Generation, then rank them by SC score.
+Given the penicillin core scaffold with the SMILES string:
+`CC1CSC2(NC(=O)*)C(=O)N2[C@H]1C(=O)O`
+Generate 10 scaffold-derived small molecule analogues by adopting LibINVENT and RNN-based Constrained Scaffold Generation respectively, then sort the generated analogues according to the SC score.
 ```
 ### De Novo Design
 ```text
-Using BamA as the target protein, with 7NRE.pdbqt as the target structure and [33.489, 8.39, 4.238] as the binding center coordinates, generate candidate small molecules with RXNFlow and Reinvent 4, then rank them by Vina score.
+Take HIV-1 protease as the target protein, and adopt `1HVR.pdb` as the target structure file. The coordinate of the binding site center is set to [15.2, 23.5, 6.8].
+Invoke Rxnflow and Reinvent4 to generate candidate small molecules, and rank all candidates based on Vina score.
 ```
 ### Molecule Evaluation
 ```text
-For the generated molecules, calculate toxicity、MIC to evaluate chemical features, and filter out candidates with poor safety and activity.
+Calculate the toxicity and MIC values of the aforementioned generated small molecules, so as to evaluate their chemical characteristics and potential performance in the drug discovery and druggability development process.
 ```
 
 ## File Structure 
