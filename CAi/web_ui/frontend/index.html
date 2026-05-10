@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CAi Copilot</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Code highlighting (loaded dynamically based on theme) -->
+    <link rel="stylesheet" id="hljs-theme" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/highlight.min.js"></script>
+    <!-- Lucide icons -->
+    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-mark">
+                        <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <defs>
+                                <linearGradient id="logoGrad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                                    <stop stop-color="#8b5cf6"/>
+                                    <stop offset="1" stop-color="#6366f1"/>
+                                </linearGradient>
+                            </defs>
+                            <rect width="32" height="32" rx="9" fill="url(#logoGrad)"/>
+                            <path d="M10 20c0-2.5 2-4.5 4.5-4.5h3c2.5 0 4.5 2 4.5 4.5M16 14a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <span class="logo-text">CAi Copilot</span>
+                </div>
+                <button class="sidebar-collapse-btn" id="collapseSidebarBtn" title="折叠侧边栏">
+                    <i data-lucide="panel-left-close" class="collapse-icon"></i>
+                </button>
+            </div>
+
+            <!-- Conversations Panel -->
+            <div class="sidebar-section sidebar-conversations">
+                <div class="section-header">
+                    <div class="section-title">
+                        <i data-lucide="message-square"></i>
+                        <span>会话</span>
+                    </div>
+                    <button class="btn-icon btn-sm" id="newConvBtn" title="新建会话">
+                        <i data-lucide="plus"></i>
+                    </button>
+                </div>
+                <div class="conversation-list" id="conversationList">
+                    <div class="conv-empty">💬 暂无会话</div>
+                </div>
+            </div>
+
+            <!-- File Panel -->
+            <div class="sidebar-section sidebar-files">
+                <div class="section-header">
+                    <div class="section-title">
+                        <i data-lucide="folder"></i>
+                        <span>工作区</span>
+                    </div>
+                    <button class="btn-icon btn-sm" id="refreshFilesBtn" title="刷新">
+                        <i data-lucide="refresh-cw"></i>
+                    </button>
+                </div>
+                <div class="file-list" id="fileList">
+                    <div class="file-empty">📂 暂无文件</div>
+                </div>
+                <div class="file-actions">
+                    <label class="btn btn-sm btn-outline upload-label" for="fileUploadInput">
+                        <i data-lucide="upload"></i>
+                        <span>上传文件</span>
+                    </label>
+                    <input type="file" id="fileUploadInput" multiple hidden>
+                </div>
+            </div>
+
+            <!-- Bottom Actions -->
+            <div class="sidebar-footer">
+                <button class="btn btn-sm btn-ghost" id="exportPdfBtn" title="导出当前会话为 PDF">
+                    <i data-lucide="file-down"></i>
+                    <span class="btn-text">导出 PDF</span>
+                </button>
+                <button class="btn btn-sm btn-ghost btn-ghost-danger" id="clearFilesBtn" title="清空工作区文件">
+                    <i data-lucide="trash-2"></i>
+                    <span class="btn-text">清空文件</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <header class="chat-header">
+                <button class="btn-icon" id="toggleSidebar" title="切换侧边栏">
+                    <i data-lucide="menu"></i>
+                </button>
+                <h1 class="chat-title">CAi Copilot</h1>
+                <div class="header-actions">
+                    <div class="header-badge">
+                        <span class="badge-dot"></span>
+                        AI Agent
+                    </div>
+                    <button class="btn-icon" id="themeToggleBtn" title="切换主题">
+                        <i data-lucide="sun" class="icon-sun"></i>
+                        <i data-lucide="moon" class="icon-moon"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Messages -->
+            <div class="messages-container" id="messagesContainer">
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-mark">
+                        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <defs>
+                                <linearGradient id="welcomeGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+                                    <stop stop-color="#8b5cf6"/>
+                                    <stop offset="1" stop-color="#6366f1"/>
+                                </linearGradient>
+                            </defs>
+                            <rect width="64" height="64" rx="18" fill="url(#welcomeGrad)"/>
+                            <path d="M20 42c0-5 4-9 9-9h6c5 0 9 4 9 9M32 28a6 6 0 1 0 0-12 6 6 0 0 0 0 12z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <h2>欢迎使用 CAi Copilot</h2>
+                    <p>药物发现与药物化学 AI 助手，让科研更高效</p>
+                    <div class="welcome-hints">
+                        <button class="hint-card" onclick="setPrompt('帮我分析一个SMILES分子的ADMET性质')">
+                            <div class="hint-icon hint-icon-blue">
+                                <i data-lucide="flask-conical"></i>
+                            </div>
+                            <div class="hint-text">
+                                <strong>ADMET 预测</strong>
+                                <span>分析分子药代动力学性质</span>
+                            </div>
+                        </button>
+                        <button class="hint-card" onclick="setPrompt('搜索关于EGFR靶点的最新药物研究进展')">
+                            <div class="hint-icon hint-icon-green">
+                                <i data-lucide="book-open"></i>
+                            </div>
+                            <div class="hint-text">
+                                <strong>文献检索</strong>
+                                <span>搜索靶点与药物进展</span>
+                            </div>
+                        </button>
+                        <button class="hint-card" onclick="setPrompt('对比两个分子的合成可及性评分')">
+                            <div class="hint-icon hint-icon-orange">
+                                <i data-lucide="atom"></i>
+                            </div>
+                            <div class="hint-text">
+                                <strong>合成评估</strong>
+                                <span>对比合成可及性评分</span>
+                            </div>
+                        </button>
+                        <button class="hint-card" onclick="setPrompt('帮我进行分子对接分析')">
+                            <div class="hint-icon hint-icon-pink">
+                                <i data-lucide="target"></i>
+                            </div>
+                            <div class="hint-text">
+                                <strong>分子对接</strong>
+                                <span>蛋白-配体相互作用分析</span>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="messages" id="messages"></div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <div class="attached-files" id="attachedFiles"></div>
+                    <div class="input-row">
+                        <label class="btn-icon attach-btn" for="chatFileInput" title="上传文件">
+                            <i data-lucide="paperclip"></i>
+                        </label>
+                        <input type="file" id="chatFileInput" multiple hidden>
+                        <textarea
+                            id="messageInput"
+                            placeholder="输入你的问题..."
+                            rows="1"
+                            autofocus
+                        ></textarea>
+                        <button class="btn-send" id="sendBtn" disabled title="发送 (Enter)">
+                            <i data-lucide="arrow-up"></i>
+                        </button>
+                    </div>
+                </div>
+                <p class="input-hint">CAi 可能会产生不准确的信息，请验证重要结果</p>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

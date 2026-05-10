@@ -16,8 +16,8 @@ dependencies = [
     "pydantic",
     "langchain",
     "python-dotenv",
-    "fastapi"
-    'uvicorn'
+    "fastapi",
+    "uvicorn"
 ]
 
 [project.urls]
