@@ -29,8 +29,13 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.graph import END, START, StateGraph
 
 from base_CAi.llm import SourceType, get_llm
-from base_CAi.tool.support_tools import run_python_repl
-from base_CAi.utils import run_bash_script, run_with_timeout
+
+from .execution import (
+    inject_custom_functions,
+    run_bash_script,
+    run_python_repl,
+    run_with_timeout,
+)
 
 
 class AgentState(TypedDict):
@@ -232,8 +237,7 @@ RULES:
         """Inject registered functions into the REPL namespace."""
         custom_fns = getattr(builtins, "_base_CAi_custom_functions", None)
         if custom_fns:
-            from base_CAi.utils import inject_custom_functions_to_repl
-            inject_custom_functions_to_repl(custom_fns)
+            inject_custom_functions(custom_fns)
 
     # ------------------------------------------------------------------
     # Public API

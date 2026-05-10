@@ -6,9 +6,11 @@ import builtins
 
 from .registry import ToolRegistry
 
-# base_CAi.utils.inject_custom_functions_to_repl reads this attribute off
-# builtins. Keeping the name consistent with upstream avoids the need to
-# monkey-patch their utility.
+# The REPL reads this attribute off `builtins` as its cross-module
+# registry of agent-registered tools. CAi.CAi_agent.execution.repl
+# also looks it up via the same name, so mirroring here means tools
+# registered through ToolRegistry become callable inside <execute>
+# blocks automatically.
 _NAMESPACE_ATTR = "_base_CAi_custom_functions"
 
 

@@ -8,10 +8,11 @@ CAi has a layered architecture designed around composition:
 BaseAgent  (execution core: LangGraph + LLM + REPL)
     │
     └── A1pro  (orchestrator — wires everything below)
-              ├── prompt/   (PromptBuilder + sections)
-              ├── tools/    (ToolRegistry + ReplBridge + Scanners)
-              ├── skills/   (SkillLoader — SOP markdown files)
-              └── web_ui/   (FastAPI + static frontend)
+              ├── execution/ (Python REPL + bash + timeout helpers)
+              ├── prompt/    (PromptBuilder + sections)
+              ├── tools/     (ToolRegistry + ReplBridge + Scanners)
+              ├── skills/    (SkillLoader — SOP markdown files)
+              └── web_ui/    (FastAPI + static frontend)
 ```
 
 Each subsystem is small, testable in isolation, and depends only on the
@@ -26,11 +27,31 @@ layer below it.
 Responsibilities:
 - Initialize the LLM via `base_CAi.llm.get_llm`
 - Build and run the LangGraph workflow (`generate → execute → generate`)
-- Execute Python and Bash code in a sandboxed REPL
+- Execute Python and Bash code via the `execution/` subpackage
 - Parse LLM responses (mixed text + code)
 
 Deliberately excludes: tool registration, prompt composition, skill
 handling, UI. Those live in dedicated subsystems that A1pro wires up.
+
+### Code execution subsystem
+
+`CAi/CAi_agent/execution/`
+
+Three small, self-contained helpers. No dependency on the legacy
+`base_CAi.tool.*` or `base_CAi.utils` modules:
+
+```
+execution/
+├── repl.py       # persistent-namespace Python REPL (exec + stdout capture)
+├── bash.py       # run_bash_script — subprocess wrapper, bash-explicit
+└── timeout.py    # run_with_timeout — ThreadPoolExecutor-based deadline
+```
+
+`BaseAgent._node_execute` invokes these through `run_with_timeout` so
+each <execute> block has a wall-clock limit. When the agent's REPL
+bridge (`tools/repl_bridge.py`) updates the tool namespace, the REPL
+picks those tools up on the next call via
+`builtins._base_CAi_custom_functions`.
 
 ### Interaction modes
 
@@ -360,11 +381,14 @@ tests/
 ├── test_tool_scanner.py        # ModuleScanner discovery             ( 8 tests)
 ├── test_repl_bridge.py         # Registry → builtins sync            ( 8 tests)
 ├── test_agent_execution.py     # Stateless history, tools, code      (10 tests)
+├── test_execution_repl.py      # Persistent REPL namespace           (13 tests)
+├── test_execution_bash.py      # Bash subprocess wrapper             ( 6 tests)
+├── test_execution_timeout.py   # run_with_timeout / pool safety      ( 6 tests)
 ├── test_web_concurrency.py     # SSE parsing + chat lock             ( 6 tests)
 ├── test_pdf_export.py          # Conversation → Markdown → PDF       (17 tests)
 ├── test_toolkit_client.py      # Tool server HTTP client             (14 tests)
 └── test_toolkit_validators.py  # SMILES input validators             ( 8 tests)
-                                  Total: 136 tests, ~1.6s runtime
+                                  Total: 157 tests, ~1.6s runtime (Linux)
 ```
 
 All tests use a `FakeLLM` stub that returns scripted responses — no

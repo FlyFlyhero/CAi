@@ -140,9 +140,7 @@ def export_conversation_to_pdf(conv: dict[str, Any], output_path: str) -> str:
     markdown_text = render_conversation_markdown(conv)
 
     # Write to a temp .md file — convert_markdown_to_pdf expects a path
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", delete=False, encoding="utf-8"
-    )
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
     try:
         tmp.write(markdown_text)
         tmp.close()
