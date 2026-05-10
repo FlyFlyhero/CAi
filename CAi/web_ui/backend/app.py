@@ -1,8 +1,15 @@
 """
 FastAPI backend for CAi Web UI.
 Provides streaming chat, file management, conversation persistence.
+
+Concurrency model:
+    The agent is a stateless execution engine. Conversation history lives in
+    ConversationStore. Each /api/chat request loads history → runs agent →
+    appends results. A global lock serialises chat requests because code
+    execution uses a shared REPL namespace (see BaseAgent._exec_lock).
 """
 
+import asyncio
 import json
 import os
 import re
@@ -39,6 +46,9 @@ _conversations_dir = str((WORKSPACE_DIR / "agent_workspace" / "_conversations").
 os.makedirs(_workspace_dir, exist_ok=True)
 
 _store = ConversationStore(_conversations_dir)
+
+# Serialise chat requests — the agent's REPL is process-global.
+_chat_lock = asyncio.Lock()
 
 
 def set_agent(agent):
@@ -170,85 +180,78 @@ async def chat(request: ChatRequest):
         conv_id = meta["id"]
 
     async def event_stream():
-        try:
-            # Send conversation ID
-            yield f"data: {json.dumps({'type': 'conversation_id', 'content': conv_id})}\n\n"
+        # Acquire the chat lock for the entire stream — concurrent chats
+        # would otherwise interleave in the shared REPL namespace.
+        async with _chat_lock:
+            try:
+                # Send conversation ID
+                yield f"data: {json.dumps({'type': 'conversation_id', 'content': conv_id})}\n\n"
 
-            # Load history
-            conv = _store.get_conversation(conv_id)
-            history = []
-            if conv and conv.get("messages"):
-                for m in conv["messages"]:
-                    if m.get("role") in ("user", "assistant"):
-                        history.append({"role": m["role"], "content": m["content"]})
+                # Load history
+                conv = _store.get_conversation(conv_id)
+                history = []
+                if conv and conv.get("messages"):
+                    for m in conv["messages"]:
+                        if m.get("role") in ("user", "assistant"):
+                            history.append({"role": m["role"], "content": m["content"]})
 
-            # Build prompt
-            agent_prompt = _build_prompt(request.message, request.file_refs)
+                # Build prompt
+                agent_prompt = _build_prompt(request.message, request.file_refs)
 
-            # Stream from agent
-            final_content = ""
-            seen_messages = set()
+                # Stream from agent (stateless — history passed explicitly)
+                final_content = ""
+                for step in _agent.run_with_history(agent_prompt, history):
+                    content = step["content"]
 
-            for step in _agent.run_with_history(agent_prompt, history, thread_id=conv_id):
-                content = step["content"]
-                msg_type = step["type"]
+                    # Parse and emit parts
+                    parts = _extract_parts(content)
 
-                # Skip duplicates
-                msg_hash = hash(content[:100])
-                if msg_hash in seen_messages:
-                    continue
-                seen_messages.add(msg_hash)
+                    if "thinking" in parts:
+                        yield f"data: {json.dumps({'type': 'thinking', 'content': parts['thinking']}, ensure_ascii=False)}\n\n"
+                    if "code" in parts:
+                        yield f"data: {json.dumps({'type': 'code', 'content': parts['code']}, ensure_ascii=False)}\n\n"
+                    if "observation" in parts:
+                        yield f"data: {json.dumps({'type': 'observation', 'content': parts['observation']}, ensure_ascii=False)}\n\n"
+                    if "text" in parts:
+                        yield f"data: {json.dumps({'type': 'text', 'content': parts['text']}, ensure_ascii=False)}\n\n"
 
-                # Parse and emit parts
-                parts = _extract_parts(content)
+                    final_content = content
 
-                if "thinking" in parts:
-                    yield f"data: {json.dumps({'type': 'thinking', 'content': parts['thinking']}, ensure_ascii=False)}\n\n"
-                if "code" in parts:
-                    yield f"data: {json.dumps({'type': 'code', 'content': parts['code']}, ensure_ascii=False)}\n\n"
-                if "observation" in parts:
-                    yield f"data: {json.dumps({'type': 'observation', 'content': parts['observation']}, ensure_ascii=False)}\n\n"
-                if "text" in parts:
-                    yield f"data: {json.dumps({'type': 'text', 'content': parts['text']}, ensure_ascii=False)}\n\n"
+                # Build the stored answer by cleaning internal tags
+                stored_answer = re.sub(r"<execute>.*?</execute>", "", final_content, flags=re.DOTALL)
+                stored_answer = re.sub(r"<observation>.*?</observation>", "", stored_answer, flags=re.DOTALL)
+                stored_answer = re.sub(r"<done\s*/?>", "", stored_answer)
+                stored_answer = re.sub(r"\n{3,}", "\n\n", stored_answer).strip()
 
-                final_content = content
+                if not stored_answer:
+                    stored_answer = final_content  # Fallback
 
-            # Extract final answer for storage
-            # Remove internal tags for the stored version
-            stored_answer = re.sub(r"<execute>.*?</execute>", "", final_content, flags=re.DOTALL)
-            stored_answer = re.sub(r"<observation>.*?</observation>", "", stored_answer, flags=re.DOTALL)
-            stored_answer = re.sub(r"<done\s*/?>", "", stored_answer)
-            stored_answer = re.sub(r"\n{3,}", "\n\n", stored_answer).strip()
+                # Send final solution
+                yield f"data: {json.dumps({'type': 'solution', 'content': stored_answer}, ensure_ascii=False)}\n\n"
 
-            if not stored_answer:
-                stored_answer = final_content  # Fallback to full content
+                # Persist
+                display_message = request.message
+                if request.file_refs:
+                    display_message += f"\n\n📎 引用: {', '.join(request.file_refs)}"
 
-            # Send final solution
-            yield f"data: {json.dumps({'type': 'solution', 'content': stored_answer}, ensure_ascii=False)}\n\n"
+                stored_messages = conv.get("messages", []) if conv else []
+                stored_messages.append({
+                    "role": "user",
+                    "content": display_message,
+                    "timestamp": datetime.now().isoformat(),
+                })
+                stored_messages.append({
+                    "role": "assistant",
+                    "content": stored_answer,
+                    "timestamp": datetime.now().isoformat(),
+                })
+                _store.save_messages(conv_id, stored_messages)
 
-            # Persist
-            display_message = request.message
-            if request.file_refs:
-                display_message += f"\n\n📎 引用: {', '.join(request.file_refs)}"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-            stored_messages = (conv.get("messages", []) if conv else [])
-            stored_messages.append({
-                "role": "user",
-                "content": display_message,
-                "timestamp": datetime.now().isoformat(),
-            })
-            stored_messages.append({
-                "role": "assistant",
-                "content": stored_answer,
-                "timestamp": datetime.now().isoformat(),
-            })
-            _store.save_messages(conv_id, stored_messages)
-
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        except Exception as e:
-            logger.exception("Chat stream error")
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                logger.exception("Chat stream error")
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

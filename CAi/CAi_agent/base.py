@@ -12,16 +12,20 @@ BaseAgent — 精简的 Agent 基类
 - 数据湖 / 软件库
 - Know-how / Skills
 - UI 相关逻辑
+
+Concurrency note:
+    BaseAgent 本身是 stateless 的。每次 run*() 调用都构造新的输入，LangGraph
+    不使用 checkpointer —— 对话历史由调用方（例如 ConversationStore）显式管理。
+    这样多个并发请求不会通过 thread_id 互相串扰。
 """
 
 import builtins
 import re
 from collections.abc import Generator
-from datetime import datetime
+from threading import Lock
 from typing import Literal, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from base_CAi.llm import SourceType, get_llm
@@ -64,6 +68,10 @@ class BaseAgent:
             base_url=base_url,
             api_key=api_key or "EMPTY",
         )
+
+        # Execution lock — code execution touches builtins (REPL namespace),
+        # so we serialise calls to avoid cross-request interference.
+        self._exec_lock = Lock()
 
         # Build workflow
         self._build_workflow()
@@ -108,11 +116,9 @@ RULES:
     def _parse_response(self, response) -> tuple[str, str]:
         """Parse LLM response → (content, next_step).
 
-        next_step: "execute" | "end" | "continue"
+        next_step: "execute" | "end"
         - "execute": response contains <execute> block → run code
-        - "end": response contains <done/> → conversation complete
-        - "continue": pure text response → return to user, wait for input
-                      (in autonomous mode, treated as "generate" again)
+        - "end":     response is pure text or contains <done/> → stop
         """
         content = response.content
         if isinstance(content, list):
@@ -128,22 +134,12 @@ RULES:
         else:
             content = str(content)
 
-        # Fix unclosed tags
+        # Fix unclosed tag (can happen with the </execute> stop sequence)
         if "<execute>" in content and "</execute>" not in content:
             content += "</execute>"
 
-        # Determine next step
         has_execute = bool(re.search(r"<execute>.*?</execute>", content, re.DOTALL))
-        has_done = "<done/>" in content or "<done>" in content
-
-        if has_execute:
-            next_step = "execute"
-        elif has_done:
-            next_step = "end"
-        else:
-            # Pure text — in autonomous mode we check if agent seems to be
-            # waiting for user input or if it should keep going
-            next_step = "end"
+        next_step = "execute" if has_execute else "end"
 
         return content.strip(), next_step
 
@@ -162,32 +158,35 @@ RULES:
         return state
 
     def _node_execute(self, state: AgentState) -> AgentState:
-        """Extract and run code from the last AI message."""
+        """Extract and run code from the last AI message.
+
+        Code execution is serialised via self._exec_lock because the REPL
+        uses a shared builtins namespace for injected functions.
+        """
         last_content = state["messages"][-1].content
 
-        # Find all execute blocks (there might be multiple)
         blocks = re.findall(r"<execute>(.*?)</execute>", last_content, re.DOTALL)
         if not blocks:
             return state
 
         results = []
-        for code in blocks:
-            code = code.strip()
-            if code.startswith("#!BASH"):
-                script = code.replace("#!BASH", "", 1).strip()
-                result = run_with_timeout(run_bash_script, [script], timeout=self.timeout_seconds)
-            else:
-                self._inject_functions_to_repl()
-                result = run_with_timeout(run_python_repl, [code], timeout=self.timeout_seconds)
-            results.append(result)
+        with self._exec_lock:
+            for code in blocks:
+                code = code.strip()
+                if code.startswith("#!BASH"):
+                    script = code.replace("#!BASH", "", 1).strip()
+                    result = run_with_timeout(run_bash_script, [script], timeout=self.timeout_seconds)
+                else:
+                    self._inject_functions_to_repl()
+                    result = run_with_timeout(run_python_repl, [code], timeout=self.timeout_seconds)
+                results.append(result)
 
         combined = "\n".join(results)
-        # Truncate very long output
         if len(combined) > 15000:
             combined = combined[:15000] + "\n\n[Output truncated — showing first 15K chars]"
 
         state["messages"].append(AIMessage(content=f"<observation>\n{combined}\n</observation>"))
-        state["next_step"] = "generate"  # Always go back to LLM after execution
+        state["next_step"] = "generate"
         return state
 
     # ------------------------------------------------------------------
@@ -195,21 +194,22 @@ RULES:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _route(state: AgentState) -> Literal["execute", "generate", "end"]:
+    def _route(state: AgentState) -> Literal["execute", "end"]:
         ns = state.get("next_step", "end")
-        if ns == "execute":
-            return "execute"
-        elif ns == "continue":
-            return "generate"
-        else:
-            return "end"
+        return "execute" if ns == "execute" else "end"
 
     # ------------------------------------------------------------------
     # Workflow construction
     # ------------------------------------------------------------------
 
     def _build_workflow(self):
-        """Build the LangGraph state machine."""
+        """Build the LangGraph state machine.
+
+        We intentionally do NOT attach a checkpointer: conversation history
+        is managed by the caller (ConversationStore), and passed into each
+        run via `run_with_history`. This keeps the agent stateless and
+        safe to use across concurrent requests.
+        """
         workflow = StateGraph(AgentState)
         workflow.add_node("generate", self._node_generate)
         workflow.add_node("execute", self._node_execute)
@@ -219,12 +219,10 @@ RULES:
         workflow.add_conditional_edges(
             "generate",
             self._route,
-            {"execute": "execute", "generate": "generate", "end": END},
+            {"execute": "execute", "end": END},
         )
 
         self.app = workflow.compile()
-        self.checkpointer = MemorySaver()
-        self.app.checkpointer = self.checkpointer
 
     # ------------------------------------------------------------------
     # REPL injection
@@ -241,53 +239,65 @@ RULES:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self, prompt: str, thread_id: str = "default") -> tuple[list[str], str]:
-        """Run the agent on a prompt. Returns (log, final_content)."""
+    def run(self, prompt: str) -> tuple[list[str], str]:
+        """Run the agent on a single prompt (no prior history).
+
+        Returns:
+            (log, final_content) — log is a list of short message summaries,
+            final_content is the last message's full content.
+        """
         inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
-        config = {"recursion_limit": 200, "configurable": {"thread_id": thread_id}}
+        config = {"recursion_limit": 200}
 
-        log = []
+        log: list[str] = []
         final_content = ""
-
         for state in self.app.stream(inputs, stream_mode="values", config=config):
             msg = state["messages"][-1]
             final_content = msg.content
             log.append(f"[{msg.__class__.__name__}] {msg.content[:200]}")
 
-        self._last_state = state
         return log, final_content
 
-    def run_stream(self, prompt: str, thread_id: str = "default") -> Generator[dict, None, None]:
-        """Stream execution steps as dicts."""
-        inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
-        config = {"recursion_limit": 200, "configurable": {"thread_id": thread_id}}
-
-        for state in self.app.stream(inputs, stream_mode="values", config=config):
-            msg = state["messages"][-1]
-            yield {"type": msg.__class__.__name__, "content": msg.content}
-
-        self._last_state = state
+    def run_stream(self, prompt: str) -> Generator[dict, None, None]:
+        """Stream execution steps as dicts (no prior history)."""
+        yield from self.run_with_history(prompt, history=[])
 
     def run_with_history(
-        self, prompt: str, history: list[dict], thread_id: str = "default"
+        self, prompt: str, history: list[dict]
     ) -> Generator[dict, None, None]:
         """Run with pre-existing conversation history.
 
-        history: list of {"role": "user"|"assistant", "content": "..."}
+        Args:
+            prompt: The new user message.
+            history: List of prior messages, each
+                     {"role": "user"|"assistant", "content": "..."}.
+                     History is provided by the caller (stateless execution);
+                     the agent does not persist anything itself.
+
+        Yields:
+            {"type": <message class name>, "content": <str>} for each new
+            message produced by the workflow.
         """
-        messages = []
-        for msg in history:
-            if msg["role"] == "user":
-                messages.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                messages.append(AIMessage(content=msg["content"]))
+        messages: list[BaseMessage] = []
+        for m in history:
+            role = m.get("role")
+            content = m.get("content", "")
+            if not isinstance(content, str):
+                continue
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
 
         messages.append(HumanMessage(content=prompt))
         inputs = {"messages": messages, "next_step": None}
-        config = {"recursion_limit": 200, "configurable": {"thread_id": thread_id}}
+        config = {"recursion_limit": 200}
 
+        # Track which messages are new (produced by this run), so we only
+        # stream those — not the replayed history.
+        seen = len(messages)
         for state in self.app.stream(inputs, stream_mode="values", config=config):
-            msg = state["messages"][-1]
-            yield {"type": msg.__class__.__name__, "content": msg.content}
-
-        self._last_state = state
+            new_msgs = state["messages"][seen:]
+            seen = len(state["messages"])
+            for msg in new_msgs:
+                yield {"type": msg.__class__.__name__, "content": msg.content}
