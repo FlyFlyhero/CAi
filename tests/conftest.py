@@ -2,7 +2,7 @@
 
 Key goal: make it easy to instantiate BaseAgent / A1pro without requiring
 real LLM credentials, network access, or the data lake. We stub out the
-LLM factory at the base_CAi.llm module level so get_llm() returns a
+LLM factory at the CAi.CAi_agent.llm module level so get_llm() returns a
 scripted fake.
 """
 
@@ -80,8 +80,8 @@ def fake_llm_factory(monkeypatch):
 
     def _install(responses):
         fake = FakeLLM(responses)
-        from base_CAi import llm as llm_mod
         from CAi.CAi_agent import base as base_mod
+        from CAi.CAi_agent import llm as llm_mod
 
         # Patch both: the factory module, and the already-imported name
         # inside CAi.CAi_agent.base. The latter is what BaseAgent.__init__

@@ -30,12 +30,25 @@ BaseAgent  （核心：LangGraph + LLM + REPL）
 
 ### 1. 配置环境变量
 
-在 `CAi/` 目录下创建 `.env` 文件：
+在 `CAi/` 目录下创建 `.env` 文件。Agent 会根据 `LLM_MODEL` 自动识别 provider：
 
 ```bash
+# Anthropic（claude-*）
 LLM_MODEL=claude-sonnet-4-5-20250929
-LLM_BASE_URL=http://your-endpoint/v1/
-LLM_API_KEY=your_key_here
+LLM_API_KEY=sk-ant-...
+
+# OpenAI（gpt-*, o1-*, o3-*）
+# LLM_MODEL=gpt-4o-mini
+# LLM_API_KEY=sk-...
+
+# DeepSeek（deepseek-*）
+# LLM_MODEL=deepseek-chat
+# LLM_API_KEY=sk-...
+
+# 自定义端点（SGLang / vLLM / 企业 OpenAI 兼容代理）
+# LLM_MODEL=qwen2.5-72b
+# LLM_BASE_URL=http://your-endpoint/v1/
+# LLM_API_KEY=your_key_here   # 本地无鉴权服务器可以填 "EMPTY"
 
 TOOL_SERVER_HOST=0.0.0.0
 TOOL_SERVER_PORT=8001

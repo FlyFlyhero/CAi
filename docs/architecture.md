@@ -9,6 +9,7 @@ BaseAgent  (execution core: LangGraph + LLM + REPL)
     │
     └── A1pro  (orchestrator — wires everything below)
               ├── execution/ (Python REPL + bash + timeout helpers)
+              ├── llm.py     (LLM factory — OpenAI / Anthropic / DeepSeek / Custom)
               ├── prompt/    (PromptBuilder + sections)
               ├── tools/     (ToolRegistry + ReplBridge + Scanners)
               ├── skills/    (SkillLoader — SOP markdown files)
@@ -25,13 +26,35 @@ layer below it.
 `CAi/CAi_agent/base.py`
 
 Responsibilities:
-- Initialize the LLM via `base_CAi.llm.get_llm`
+- Initialize the LLM via `CAi.CAi_agent.llm.get_llm`
 - Build and run the LangGraph workflow (`generate → execute → generate`)
 - Execute Python and Bash code via the `execution/` subpackage
 - Parse LLM responses (mixed text + code)
 
 Deliberately excludes: tool registration, prompt composition, skill
 handling, UI. Those live in dedicated subsystems that A1pro wires up.
+
+### LLM factory
+
+`CAi/CAi_agent/llm.py`
+
+A small provider factory supporting four sources. Auto-detection from
+the model name handles the common cases:
+
+| Source      | Auto-detect prefix    | Env var for API key | Endpoint |
+|-------------|-----------------------|---------------------|----------|
+| `OpenAI`    | `gpt-*`, `o1-*`, `o3-*` | `OPENAI_API_KEY`    | api.openai.com |
+| `Anthropic` | `claude-*`            | `ANTHROPIC_API_KEY` | api.anthropic.com |
+| `DeepSeek`  | `deepseek-*`          | `DEEPSEEK_API_KEY`  | api.deepseek.com/v1 |
+| `Custom`    | (any, when `base_url` is given) | (optional)        | user-supplied (OpenAI-compatible) |
+
+Specialised cases handled:
+- OpenAI `gpt-5` / `o1` / `o3` use the Responses API and can't accept
+  `stop` or `temperature` — the factory drops both transparently.
+- DeepSeek is OpenAI-compatible; we point `ChatOpenAI` at the official
+  endpoint instead of introducing a separate client.
+- `Custom` is the catch-all for local SGLang / vLLM servers or any
+  corporate OpenAI-compatible proxy.
 
 ### Code execution subsystem
 
@@ -384,11 +407,12 @@ tests/
 ├── test_execution_repl.py      # Persistent REPL namespace           (13 tests)
 ├── test_execution_bash.py      # Bash subprocess wrapper             ( 6 tests)
 ├── test_execution_timeout.py   # run_with_timeout / pool safety      ( 6 tests)
+├── test_llm_factory.py         # LLM provider factory                (26 tests)
 ├── test_web_concurrency.py     # SSE parsing + chat lock             ( 6 tests)
 ├── test_pdf_export.py          # Conversation → Markdown → PDF       (17 tests)
 ├── test_toolkit_client.py      # Tool server HTTP client             (14 tests)
 └── test_toolkit_validators.py  # SMILES input validators             ( 8 tests)
-                                  Total: 157 tests, ~1.6s runtime (Linux)
+                                  Total: 183 tests, ~1.7s runtime (Linux)
 ```
 
 All tests use a `FakeLLM` stub that returns scripted responses — no

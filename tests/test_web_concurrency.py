@@ -93,8 +93,8 @@ async def test_chat_lock_serialises_concurrent_requests(fake_llm_factory, tmp_pa
             return _R()
 
     slow = _SlowFake()
-    from base_CAi import llm as llm_mod
     from CAi.CAi_agent import base as base_mod
+    from CAi.CAi_agent import llm as llm_mod
 
     # Patch the factory in both places
     import types

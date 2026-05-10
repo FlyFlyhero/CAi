@@ -30,12 +30,25 @@ See [docs/architecture.md](docs/architecture.md) for full details.
 
 ### 1. Configure environment
 
-Create `CAi/.env`:
+Create `CAi/.env`. The agent auto-detects the provider from `LLM_MODEL`:
 
 ```bash
+# Anthropic (claude-*)
 LLM_MODEL=claude-sonnet-4-5-20250929
-LLM_BASE_URL=http://your-endpoint/v1/
-LLM_API_KEY=your_key_here
+LLM_API_KEY=sk-ant-...
+
+# OpenAI (gpt-*, o1-*, o3-*)
+# LLM_MODEL=gpt-4o-mini
+# LLM_API_KEY=sk-...
+
+# DeepSeek (deepseek-*)
+# LLM_MODEL=deepseek-chat
+# LLM_API_KEY=sk-...
+
+# Custom endpoint (SGLang / vLLM / corporate OpenAI-compatible proxy)
+# LLM_MODEL=qwen2.5-72b
+# LLM_BASE_URL=http://your-endpoint/v1/
+# LLM_API_KEY=your_key_here   # or "EMPTY" for unauthenticated local servers
 
 TOOL_SERVER_HOST=0.0.0.0
 TOOL_SERVER_PORT=8001
