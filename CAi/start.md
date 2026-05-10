@@ -1,65 +1,70 @@
 # Backend Tool Development Guide
 
-> Using `scscore` as an example, this guide explains how to add a new backend tool for CAi.
+> Using `scscore` as an example, this guide walks through adding a new
+> backend tool to CAi end-to-end.
 
-## Overall Architecture: Sandbox Execution Mechanism
+## Overall architecture — sandbox execution
 
-The full tool invocation chain is as follows:
+The full invocation chain is:
 
 ```text
-Agent (template_tools.py)
-    │  POST /run/{tool}/{action}  params: {...}
+Agent wrapper  (CAi/toolkit/functions/*.py)
+    │  client.run_tool(<tool>, payload, action=...)
+    │  POST /run/{tool}/{action}     body: params dict
     ▼
-FastAPI (app.py)
-    │  Create job directory and write params.json
-    │  Background task: job_manager.run_job(job_id, tool, action)
+Tool server   (CAi/toolkit/server/app.py  — FastAPI)
+    │  JobManager creates a sandbox dir, writes params.json
+    │  background task: job_manager.run_job(job_id, tool, action)
     ▼
-JobManager (job_manager.py)
+JobManager    (CAi/toolkit/server/job_manager.py)
     │  conda run -n <env> python <script.py>
-    │  cwd = workspace/jobs/<job_id>/         ← isolated sandbox directory
-    │  stdin = content of params.json (JSON string)
+    │  cwd  = workspace/jobs/<job_id>/     ← isolated sandbox
+    │  stdin = params.json content (JSON string)
     ▼
-Tool script (run.py)
-    │  Read parameters from params.json
-    │  Execute computation logic
-    │  Write results to result.json
+Tool script   (run.py in your tool's directory)
+    │  read parameters from params.json
+    │  execute computation
+    │  write results to result.json
     ▼
 JobManager polls result.json / error.json
     ▼
-Agent receives the result and returns it to the LLM
+client.run_tool returns the parsed result to the wrapper
+    ▼
+Agent sees the wrapper's return value
 ```
 
-**Key design: every job has its own isolated sandbox directory**
+**Key design: every job has its own isolated sandbox directory.**
 
 ```text
-toolkit/server/workspace/jobs/
+CAi/toolkit/server/workspace/jobs/
 └── <uuid>/
     ├── params.json     ← input parameters (written by JobManager)
     ├── result.json     ← computation results (written by run.py)
-    ├── error.json      ← error information (written by run.py or JobManager)
-    ├── stdout.log      ← standard output (captured by JobManager)
-    └── stderr.log      ← standard error (captured by JobManager)
+    ├── error.json      ← error info (written by run.py or JobManager)
+    ├── stdout.log      ← captured stdout
+    └── stderr.log      ← captured stderr
 ```
 
-The script working directory (`cwd`) is this UUID directory, so you can directly use `open("params.json")` and `open("result.json", "w")`. **No absolute path is needed.**
+The script's cwd is this UUID directory, so `open("params.json")` and
+`open("result.json", "w")` work directly. **No absolute paths needed.**
 
 ---
 
-## File Structure: The Three Required Files for a New Tool
+## File layout — three files per tool
 
 ```text
-toolkit/server/tools/
-└── <your_tool_name>/           ← tool directory, and also the tool ID
-    ├── config.json             ← required: declares environment, GPU requirement, action mapping
-    ├── run.py                  ← main script (for a single-action tool)
+CAi/toolkit/server/tools/
+└── <your_tool_name>/           ← tool directory; name is the tool ID
+    ├── config.json             ← required: env, GPU, action mapping
+    ├── run.py                  ← main script (single-action tools)
     └── <dependencies_or_models>/
 ```
 
 ---
 
-## Step 1: Write `config.json`
+## Step 1 — `config.json`
 
-### Simplest case: single action, no GPU required
+### Simplest case (single action, CPU only)
 
 ```json
 {
@@ -69,11 +74,12 @@ toolkit/server/tools/
 }
 ```
 
-- `name`: tool name, should match the directory name
-- `conda_env`: the conda environment used to run the script
-- `gpu`: whether the tool should request a GPU (`false` = CPU-only tool)
+- `name`: tool name — must match the directory name.
+- `conda_env`: conda environment used to run the script.
+- `gpu`: whether to request a GPU from the queue (`false` = CPU only).
 
-If the `actions` field is omitted, the framework automatically uses `{"default": "run.py"}`. That means `POST /run/scscore/default` will execute `run.py`.
+When `actions` is omitted the framework uses `{"default": "run.py"}`,
+so `POST /run/scscore/default` runs `run.py`.
 
 ### GPU-required case
 
@@ -85,9 +91,10 @@ If the `actions` field is omitted, the framework automatically uses `{"default":
 }
 ```
 
-`gpu_manager` will allocate an available GPU, inject it through `CUDA_VISIBLE_DEVICES`, and automatically release it after the task finishes.
+`gpu_manager` allocates a free GPU, injects `CUDA_VISIBLE_DEVICES`, and
+releases the GPU when the job finishes.
 
-### Multi-action case (one tool, multiple scripts)
+### Multi-action case (one tool, several scripts)
 
 ```json
 {
@@ -101,35 +108,32 @@ If the `actions` field is omitted, the framework automatically uses `{"default":
 }
 ```
 
-Then the Agent can call `POST /run/reinvent4/sample` and `POST /run/reinvent4/score` separately.
+Then the wrapper can call `POST /run/reinvent4/sample` or
+`POST /run/reinvent4/score` independently.
 
 ---
 
-## Step 2: Write `run.py` (Full Example with scscore)
+## Step 2 — `run.py` (full example using scscore)
 
-`run.py` only needs to follow one rule: **read inputs from `params.json` and write outputs to `result.json`.**
+`run.py` follows one rule: **read from `params.json`, write to `result.json`**.
 
 ```python
-import sys
 import json
-from pathlib import Path
+
 
 def main():
-    # ✅ 1. Read parameters (fixed pattern)
-    # The script cwd is already the job sandbox directory
+    # 1. Read parameters. cwd is already the sandbox dir.
     params = json.load(open("params.json"))
-
     smiles_list = params.get("smiles_list", [])
     model_type  = params.get("model_type", "1024bool")
 
-    # ✅ 2. Execute computation logic
-    # ... your core code ...
+    # 2. Run the computation.
     result = calculate_scscore(smiles_list, model_type)
 
-    # ✅ 3. Write results (fixed pattern)
-    # result must be a JSON-serializable dict
+    # 3. Write the result. Must be JSON-serialisable.
     with open("result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
+
 
 if __name__ == "__main__":
     main()
@@ -137,7 +141,8 @@ if __name__ == "__main__":
 
 ### Recommended `result.json` format
 
-The Agent-side parser (`template_tools.py`) will parse `result.json`, so it is recommended to follow this structure:
+The toolkit's HTTP client (`CAi/toolkit/client.py`) parses `result.json`
+and expects this shape:
 
 ```json
 {
@@ -155,88 +160,138 @@ The Agent-side parser (`template_tools.py`) will parse `result.json`, so it is r
 
 | Field | Description |
 |---|---|
-| `success` | Boolean. If `false`, the Agent treats the tool as failed. |
-| `summary` | Statistical summary. The Agent reads this first to avoid transferring too much data. |
+| `success` | Boolean. If `false`, the client treats the tool as failed. |
+| `summary` | Aggregated statistics — the wrapper usually reads this first. |
 | `results` | Full per-item results. |
-| `errors` | Partial failure list. Use `null` if all items succeed. |
+| `errors` | Partial-failure list, or `null` when everything succeeded. |
 
-### Error handling: wrap `main()` with try/except
+### Error handling — wrap `main()` in try/except
 
 ```python
 def main():
     try:
         params = json.load(open("params.json"))
         # ... normal logic ...
-        result = {"success": True, "summary": {...}, "results": [...]} 
+        result = {"success": True, "summary": {...}, "results": [...]}
     except Exception as e:
-        # Any exception should still be written into result.json
+        # Still write result.json so the client surfaces a clean error.
         result = {"success": False, "error": str(e)}
 
     with open("result.json", "w") as f:
         json.dump(result, f)
 
+
 if __name__ == "__main__":
     main()
 ```
 
-> **Note**: do not rely on `print()` for returning results. stdout will be captured into `stdout.log` by JobManager and will not be read by the Agent. For debugging logs, use `print(..., file=sys.stderr)` so they go to stderr.
+> **Note**: don't rely on `print()` for output. stdout is captured into
+> `stdout.log` and never reaches the agent. For debugging, write to
+> stderr with `print(..., file=sys.stderr)`.
 
 ---
 
-## Step 3: Register the Agent Tool Function in `template_tools.py`
+## Step 3 — Register the agent wrapper
 
-After the backend script is ready, you still need to add a Python wrapper function in `toolkit/functions/` so the Agent can invoke it.
+After the backend script is ready, add a Python wrapper function so the
+agent can call the tool. Wrappers live in:
+
+- `CAi/toolkit/functions/generation.py` — for molecule-generation tools
+- `CAi/toolkit/functions/evaluation.py` — for molecule-evaluation tools
+
+Each wrapper uses `run_tool` from `CAi.toolkit.client`:
 
 ```python
-def calculate_scscore(smiles: str = None, smiles_list: list = None, model_type: str = "1024bool") -> str:
+# in CAi/toolkit/functions/evaluation.py (for scscore)
+
+import json
+
+from ..client import run_tool
+
+
+def calculate_scscore(
+    smiles: str | None = None,
+    smiles_list: list[str] | None = None,
+    model_type: str = "1024bool",
+) -> str:
     """
-    [Tool description - the LLM reads this to decide when to call the tool]
-    Estimate the synthetic accessibility of molecules using the SCScore model.
+    [Tool description — the LLM reads this to decide when to call the tool]
+    Estimate synthetic accessibility via the SCScore model.
     ...
     """
-    # 1. Validate arguments
+    # 1. Argument validation
     if smiles:
         smiles_list = [smiles]
     if not smiles_list:
-        return json.dumps({"success": False, "error": "smiles or smiles_list must be provided"})
+        return json.dumps(
+            {"success": False, "error": "smiles or smiles_list must be provided"}
+        )
 
-    # 2. Call backend
+    # 2. Call the backend (tool name must match the tools/ directory)
     payload = {"smiles_list": smiles_list, "model_type": model_type}
-    result = _call_worker_api("scscore", payload)   # tool name must match tools/ directory name
-    #                                    ↑ for multi-action tools: _call_worker_api("reinvent4", payload, action="score")
+    result = run_tool("scscore", payload)
+    # For multi-action tools, pass action=...:
+    #   run_tool("reinvent4", payload, action="score", timeout_mins=15)
 
-    # 3. Return formatted string to the Agent
+    # 3. Return a JSON string to the agent
     return json.dumps(result, ensure_ascii=False)
 ```
 
-`_call_worker_api` automatically polls the job status until `result.json` appears. The default timeout is 5 minutes, and it can be adjusted with `timeout_mins`.
+`run_tool` handles submission, polling (with exponential backoff),
+timeout (default 5 minutes, override with `timeout_mins`), and error
+normalisation.
+
+### Expose the wrapper to the agent
+
+Add the function name to two `__all__` lists:
+
+1. `CAi/toolkit/functions/__init__.py`
+2. `CAi/toolkit/__init__.py`
+
+This is what makes the agent's `ModuleScanner` pick it up. Without
+either export, the tool is invisible to `A1pro`.
 
 ---
 
-## Complete Checklist for Adding a New Tool
+## Complete checklist
 
 ```text
-□ 1. Create the following files under tools/<your_tool>/:
-      - config.json  (set name / conda_env / gpu)
-      - run.py       (read params.json → compute → write result.json)
+□ 1. Create files under CAi/toolkit/server/tools/<your_tool>/
+      - config.json   (name / conda_env / gpu; optionally actions)
+      - run.py        (read params.json → compute → write result.json)
 
-□ 2. Ensure dependencies are installed in the corresponding conda environment
+□ 2. Install dependencies in the target conda environment
       conda activate <env>
       pip install ...
 
-□ 3. Add the Agent wrapper function in template_tools.py
-      - the function name will be recognized by the Agent
-      - the docstring is the main signal for the Agent to understand how to use the tool
+□ 3. Add the wrapper function to one of:
+      - CAi/toolkit/functions/generation.py
+      - CAi/toolkit/functions/evaluation.py
+      and re-export it from:
+      - CAi/toolkit/functions/__init__.py  (__all__)
+      - CAi/toolkit/__init__.py            (__all__)
 
-□ 4. Restart the backend service and confirm the tool is loaded
-      curl http://localhost:8001/tools
+□ 4. Restart the tool server
+      python -m CAi.toolkit.server.app
+      # Startup banner prints the loaded tools — verify your tool is listed.
 
-□ 5. Manually test once with curl
+□ 5. Quick self-check via /health
+      curl http://localhost:8001/health
+      # → {"status": "ok", "tools": [..., "your_tool_name", ...], ...}
+
+□ 6. Manual smoke test with curl
       curl -X POST http://localhost:8001/run/scscore/default \
            -H "Content-Type: application/json" \
            -d '{"smiles_list": ["c1ccccc1"]}'
-      # returns {"job_id": "..."}
+      # → {"job_id": "<uuid>"}
 
-      curl http://localhost:8001/job/<job_id>
-      # returns {"status": "finished", "data": {...}}
+      curl http://localhost:8001/job/<uuid>
+      # → {"status": "finished", "data": {"success": true, ...}}
+
+□ 7. Smoke test via the Python client (same path the agent takes)
+      python -c "from CAi.toolkit.client import run_tool; \
+                 print(run_tool('scscore', {'smiles_list':['c1ccccc1']}))"
+
+□ 8. For a running agent, either restart it or hot-reload tools:
+      agent.reload_tools()
 ```
