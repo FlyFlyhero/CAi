@@ -60,8 +60,8 @@ Specialised cases handled:
 
 `CAi/CAi_agent/execution/`
 
-Three small, self-contained helpers. No dependency on the legacy
-`base_CAi.tool.*` or `base_CAi.utils` modules:
+Three small, self-contained helpers. No external dependencies beyond
+the Python standard library:
 
 ```
 execution/

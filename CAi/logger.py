@@ -1,5 +1,5 @@
 """
-base_CAi Logging Module
+CAi Logging Module
 
 Centralized logging configuration for the entire project.
 Provides structured logging with different levels, file rotation, and colored console output.
@@ -35,7 +35,7 @@ class ColoredFormatter(logging.Formatter):
 
 class CAiLogger:
     """
-    Centralized logger for base_CAi project.
+    Centralized logger for the CAi project.
 
     Features:
     - Colored console output
@@ -50,7 +50,7 @@ class CAiLogger:
 
     def __init__(
         self,
-        name: str = "base_CAi",
+        name: str = "CAi",
         log_dir: str | None = None,
         console_level: str = "INFO",
         file_level: str = "DEBUG",
@@ -85,7 +85,7 @@ class CAiLogger:
 
         # Setup log directory
         if log_dir is None:
-            log_dir = os.getenv("BASE_CAI_LOG_DIR", "./logs")
+            log_dir = os.getenv("CAI_LOG_DIR", "./logs")
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -113,7 +113,7 @@ class CAiLogger:
         CAiLogger._instances[name] = self
 
     @classmethod
-    def get_logger(cls, name: str = "base_CAi", **kwargs) -> logging.Logger:
+    def get_logger(cls, name: str = "CAi", **kwargs) -> logging.Logger:
         """
         Get or create a logger instance.
 
@@ -181,7 +181,7 @@ class CAiLogger:
 
 
 # Convenience function for quick logger access
-def get_logger(name: str = "base_CAi", **kwargs) -> logging.Logger:
+def get_logger(name: str = "CAi", **kwargs) -> logging.Logger:
     """
     Get a logger instance.
 
@@ -193,7 +193,7 @@ def get_logger(name: str = "base_CAi", **kwargs) -> logging.Logger:
         Logger instance
 
     Example:
-        >>> from base_CAi.logger import get_logger
+        >>> from CAi.logger import get_logger
         >>> logger = get_logger(__name__)
         >>> logger.info("Starting process")
     """

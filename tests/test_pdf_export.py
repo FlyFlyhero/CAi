@@ -1,8 +1,8 @@
 """Tests for the PDF export module.
 
 The Markdown rendering is pure and fully tested here. The actual PDF
-conversion is mocked so we don't depend on weasyprint / pandoc being
-installed in CI.
+conversion is mocked at the `_invoke_converter` level so the tests
+don't depend on weasyprint / pandoc being installed in CI.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import os
 
 import pytest
 
+from CAi.web_ui.backend import pdf_export
 from CAi.web_ui.backend.pdf_export import (
     EmptyConversation,
     PdfEngineUnavailable,
@@ -101,7 +102,7 @@ def test_render_basic_conversation():
     }
     out = render_conversation_markdown(conv)
     assert out.startswith("# My chat")
-    assert "2025-01-01T12:00:00" in out  # created_at
+    assert "2025-01-01T12:00:00" in out
     assert "🧑 User" in out
     assert "🤖 Assistant" in out
     assert "Hello" in out
@@ -112,10 +113,7 @@ def test_render_reformats_agent_tags_inline():
     conv = {
         "messages": [
             {"role": "user", "content": "compute 6*7"},
-            {
-                "role": "assistant",
-                "content": "<execute>print(6*7)</execute>",
-            },
+            {"role": "assistant", "content": "<execute>print(6*7)</execute>"},
             {"role": "assistant", "content": "<observation>42</observation>"},
         ]
     }
@@ -130,7 +128,7 @@ def test_render_skips_malformed_messages():
         "messages": [
             {"role": "user", "content": "keep me"},
             "not a dict",
-            {"role": "user", "content": 123},  # non-string
+            {"role": "user", "content": 123},
             None,
             {"role": "assistant", "content": "also keep"},
         ]
@@ -148,28 +146,27 @@ def test_render_falls_back_to_default_title():
 
 
 # ---------------------------------------------------------------------------
-# export_conversation_to_pdf (converter mocked)
+# export_conversation_to_pdf — converter mocked
 # ---------------------------------------------------------------------------
 
 
+def _install_fake_converter(monkeypatch, impl):
+    """Replace _invoke_converter on the module so tests control conversion."""
+    monkeypatch.setattr(pdf_export, "_invoke_converter", impl)
+
+
 def test_export_calls_converter_with_correct_paths(tmp_path, monkeypatch):
-    """The exporter must write a .md file, pass it to convert_markdown_to_pdf,
-    and then clean up the tempfile."""
     captured = {}
 
     def fake_convert(md_path, pdf_path):
-        # Capture arguments and produce a fake PDF so the file exists
         captured["md_path"] = md_path
         captured["pdf_path"] = pdf_path
-        # Read the markdown so we verify it got written
         with open(md_path, encoding="utf-8") as f:
             captured["md_content"] = f.read()
         with open(pdf_path, "wb") as f:
             f.write(b"%PDF-fake")
 
-    from base_CAi import utils as base_utils
-
-    monkeypatch.setattr(base_utils, "convert_markdown_to_pdf", fake_convert)
+    _install_fake_converter(monkeypatch, fake_convert)
 
     conv = {
         "title": "T",
@@ -185,44 +182,89 @@ def test_export_calls_converter_with_correct_paths(tmp_path, monkeypatch):
     assert not os.path.exists(captured["md_path"])
 
 
-def test_export_wraps_import_error_as_engine_unavailable(tmp_path, monkeypatch):
+def test_export_surfaces_engine_unavailable(tmp_path, monkeypatch):
     def fake_convert(md_path, pdf_path):
-        raise ImportError("no weasyprint, no markdown2pdf, no pandoc")
+        raise PdfEngineUnavailable("nothing available")
 
-    from base_CAi import utils as base_utils
-
-    monkeypatch.setattr(base_utils, "convert_markdown_to_pdf", fake_convert)
+    _install_fake_converter(monkeypatch, fake_convert)
 
     conv = {"messages": [{"role": "user", "content": "hi"}]}
-    with pytest.raises(PdfEngineUnavailable) as excinfo:
+    with pytest.raises(PdfEngineUnavailable, match="nothing available"):
         export_conversation_to_pdf(conv, str(tmp_path / "x.pdf"))
-    # The message should guide the user towards fixing it
-    assert "weasyprint" in str(excinfo.value) or "backend" in str(excinfo.value).lower()
-
-
-def test_export_wraps_dll_errors_as_engine_unavailable(tmp_path, monkeypatch):
-    """Windows DLL-loading failures in weasyprint should surface as a
-    clear error, not a generic 500."""
-
-    def fake_convert(md_path, pdf_path):
-        raise OSError("cannot load library 'libpango-1.0-0.dll'")
-
-    from base_CAi import utils as base_utils
-
-    monkeypatch.setattr(base_utils, "convert_markdown_to_pdf", fake_convert)
-
-    conv = {"messages": [{"role": "user", "content": "hi"}]}
-    with pytest.raises(PdfEngineUnavailable) as excinfo:
-        export_conversation_to_pdf(conv, str(tmp_path / "x.pdf"))
-    assert "pango" in str(excinfo.value).lower() or "cairo" in str(excinfo.value).lower()
 
 
 def test_export_empty_conversation_raises(tmp_path, monkeypatch):
-    from base_CAi import utils as base_utils
-
-    # Converter shouldn't even be called
-    monkeypatch.setattr(base_utils, "convert_markdown_to_pdf",
-                        lambda *a, **k: pytest.fail("shouldn't be called"))
-
+    _install_fake_converter(
+        monkeypatch,
+        lambda md, pdf: pytest.fail("shouldn't be called"),
+    )
     with pytest.raises(EmptyConversation):
         export_conversation_to_pdf({"messages": []}, str(tmp_path / "x.pdf"))
+
+
+# ---------------------------------------------------------------------------
+# _invoke_converter backend selection
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_picks_weasyprint_first(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_weasy(md, pdf):
+        calls.append(("weasy", md, pdf))
+
+    def fake_pandoc(md, pdf):
+        calls.append(("pandoc", md, pdf))
+
+    monkeypatch.setattr(pdf_export, "_weasyprint_convert", fake_weasy)
+    monkeypatch.setattr(pdf_export, "_pandoc_convert", fake_pandoc)
+
+    pdf_export._invoke_converter(str(tmp_path / "x.md"), str(tmp_path / "x.pdf"))
+    assert calls == [("weasy", str(tmp_path / "x.md"), str(tmp_path / "x.pdf"))]
+
+
+def test_invoke_falls_back_to_pandoc_when_weasy_missing(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_weasy(md, pdf):
+        raise pdf_export._WeasyprintMissing()
+
+    def fake_pandoc(md, pdf):
+        calls.append("pandoc")
+
+    monkeypatch.setattr(pdf_export, "_weasyprint_convert", fake_weasy)
+    monkeypatch.setattr(pdf_export, "_pandoc_convert", fake_pandoc)
+
+    pdf_export._invoke_converter("a.md", "a.pdf")
+    assert calls == ["pandoc"]
+
+
+def test_invoke_reports_native_missing_without_fallback(tmp_path, monkeypatch):
+    """If weasyprint is installed but native libs are missing, we surface
+    that directly instead of silently falling back."""
+
+    def fake_weasy(md, pdf):
+        raise pdf_export._WeasyprintNativeMissing("libpango not found")
+
+    def fake_pandoc(md, pdf):
+        pytest.fail("should not fall back when weasyprint is present")
+
+    monkeypatch.setattr(pdf_export, "_weasyprint_convert", fake_weasy)
+    monkeypatch.setattr(pdf_export, "_pandoc_convert", fake_pandoc)
+
+    with pytest.raises(PdfEngineUnavailable, match="Pango"):
+        pdf_export._invoke_converter("a.md", "a.pdf")
+
+
+def test_invoke_fails_when_all_backends_missing(tmp_path, monkeypatch):
+    def missing_weasy(md, pdf):
+        raise pdf_export._WeasyprintMissing()
+
+    def missing_pandoc(md, pdf):
+        raise pdf_export._PandocMissing()
+
+    monkeypatch.setattr(pdf_export, "_weasyprint_convert", missing_weasy)
+    monkeypatch.setattr(pdf_export, "_pandoc_convert", missing_pandoc)
+
+    with pytest.raises(PdfEngineUnavailable, match="No PDF backend"):
+        pdf_export._invoke_converter("a.md", "a.pdf")

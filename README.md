@@ -153,7 +153,6 @@ CAi_copilot/
 │       │   ├── conversation_store.py
 │       │   └── pdf_export.py        # Conversation → Markdown → PDF
 │       └── frontend/                # Static HTML/JS/CSS
-├── base_CAi/                        # LLM factory + code execution utilities
 └── docs/
     └── architecture.md              # Detailed architecture documentation
 ```

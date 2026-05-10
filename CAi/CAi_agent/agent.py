@@ -43,6 +43,7 @@ class A1pro(BaseAgent):
         source=None,
         base_url: str | None = None,
         api_key: str | None = None,
+        temperature: float | None = None,
         timeout_seconds: int = 600,
         # Tools
         auto_load_tools: bool = True,
@@ -85,6 +86,7 @@ class A1pro(BaseAgent):
             source=source,
             base_url=base_url,
             api_key=api_key,
+            temperature=temperature,
             timeout_seconds=timeout_seconds,
             system_prompt="",  # overwritten right after by _rebuild_prompt
         )

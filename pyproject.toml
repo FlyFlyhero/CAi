@@ -36,7 +36,7 @@ dev = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["CAi*","base_CAi*"]  # 2. 删除了之前重复的 "CAi*"
+include = ["CAi*"]
 exclude = ["test*", "tutorials*"]
 
 [tool.ruff]

@@ -154,7 +154,6 @@ CAi_copilot/
 │       │   ├── conversation_store.py
 │       │   └── pdf_export.py        # 对话 → Markdown → PDF
 │       └── frontend/                # 静态 HTML/JS/CSS
-├── base_CAi/                        # LLM 工厂 + 代码执行工具
 └── docs/
     └── architecture.md              # 详细架构文档
 ```

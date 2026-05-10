@@ -1,42 +1,77 @@
 """
-全局配置文件
-所有端口、主机地址、LLM 参数统一在此管理。
-修改方式：
-  1. 直接修改本文件中的默认值（适合开发环境）
-  2. 在 biomiplus/.env 中设置对应环境变量（推荐，优先级更高）
+Global configuration — all ports, hosts, and LLM parameters live here.
+
+Two ways to override the defaults:
+  1. Edit the defaults in this file (best for local development).
+  2. Set the corresponding environment variable in CAi/.env (higher
+     priority — recommended for deployment).
+
+Env vars read here:
+  TOOL_SERVER_HOST / TOOL_SERVER_PORT
+  WEB_BACKEND_HOST / WEB_BACKEND_PORT
+  WEB_FRONTEND_PORT
+  LLM_MODEL / LLM_SOURCE / LLM_BASE_URL / LLM_API_KEY / LLM_TEMPERATURE
+  OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY
+      (read directly by CAi.CAi_agent.llm when LLM_SOURCE selects
+       the corresponding provider)
 """
+
+from __future__ import annotations
 
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 加载项目根目录下的 .env 文件
+# Load .env next to this file (CAi/.env)
 load_dotenv(Path(__file__).parent / ".env")
 
+# Repo root — one level above the CAi/ package.
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 
 
 # =============================================================================
-# 端口配置
+# Ports
 # =============================================================================
 
-# toolkit/server/app.py  —— 工具执行服务
+# CAi/toolkit/server/app.py — tool execution service
 TOOL_SERVER_HOST = os.getenv("TOOL_SERVER_HOST", "0.0.0.0")
-TOOL_SERVER_PORT = int(os.getenv("TOOL_SERVER_PORT", 8001))
+TOOL_SERVER_PORT = int(os.getenv("TOOL_SERVER_PORT", "8001"))
 
-# bio_agent/web_ui/backend/api.py  —— Web UI 后端（Vite proxy 指向此端口）
+# CAi/web_ui/backend/app.py — Web UI backend (Vite proxies here in dev)
 WEB_BACKEND_HOST = os.getenv("WEB_BACKEND_HOST", "0.0.0.0")
-WEB_BACKEND_PORT = int(os.getenv("WEB_BACKEND_PORT", 8000))
+WEB_BACKEND_PORT = int(os.getenv("WEB_BACKEND_PORT", "8000"))
 
-# bio_agent/web_ui/frontend (Vite dev server)
-WEB_FRONTEND_PORT = int(os.getenv("WEB_FRONTEND_PORT", 3000))
+# CAi/web_ui/frontend — Vite dev server (not used in production)
+WEB_FRONTEND_PORT = int(os.getenv("WEB_FRONTEND_PORT", "3000"))
+
 
 # =============================================================================
-# LLM 配置
+# LLM
 # =============================================================================
 
+# Model identifier. Shape depends on LLM_SOURCE:
+#   Anthropic → claude-*
+#   OpenAI    → gpt-*, o1-*, o3-*
+#   DeepSeek  → deepseek-*
+#   Custom    → whatever your OpenAI-compatible endpoint exposes
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-5-20250929")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://XXXXX/v1/")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")  # 请在 .env 中填写
-LLM_SOURCE = os.getenv("LLM_SOURCE", "Custom")
+
+# None → CAi.CAi_agent.llm auto-detects from the model name.
+# Only set this explicitly if auto-detection fails (e.g. to force Custom
+# for a model whose name doesn't match any prefix).
+LLM_SOURCE: str | None = os.getenv("LLM_SOURCE") or None
+
+# Only used when LLM_SOURCE == "Custom". Must be an OpenAI-compatible
+# /v1 endpoint (SGLang / vLLM / corporate proxy).
+LLM_BASE_URL = os.getenv("LLM_BASE_URL") or None
+
+# Per-provider API keys:
+#   - For Custom, pass LLM_API_KEY ("EMPTY" for unauthenticated local servers).
+#   - For OpenAI / Anthropic / DeepSeek, the factory reads
+#     OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY directly
+#     when LLM_API_KEY is empty. Setting LLM_API_KEY overrides that.
+LLM_API_KEY = os.getenv("LLM_API_KEY") or None
+
+# Sampling temperature. Keep conservative for reproducibility.
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))

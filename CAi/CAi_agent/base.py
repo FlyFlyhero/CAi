@@ -58,19 +58,23 @@ class BaseAgent:
         source: SourceType | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        temperature: float | None = None,
         timeout_seconds: int = 600,
         system_prompt: str | None = None,
     ):
         self.timeout_seconds = timeout_seconds
         self._system_prompt = system_prompt or self._default_system_prompt()
 
-        # Init LLM
+        # Init LLM. We pass api_key through as-is (None → let the factory
+        # read the provider-specific env var; "EMPTY" works for local
+        # OpenAI-compatible servers that don't require auth).
         self.llm = get_llm(
             llm,
+            temperature=temperature,
             stop_sequences=["</execute>"],
             source=source,
             base_url=base_url,
-            api_key=api_key or "EMPTY",
+            api_key=api_key,
         )
 
         # Execution lock — code execution touches builtins (REPL namespace),

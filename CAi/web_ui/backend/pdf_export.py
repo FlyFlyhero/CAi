@@ -4,16 +4,19 @@ Designed to be independent of the agent implementation: it reads a
 conversation dict (as returned by ConversationStore.get_conversation) and
 produces a PDF file on disk.
 
-The actual PDF conversion is delegated to base_CAi.utils.convert_markdown_to_pdf,
-which tries weasyprint → markdown2pdf → pandoc in that order. If none of
-these are usable on the current system, export_conversation_to_pdf raises
-a PdfEngineUnavailable with an actionable message.
+PDF conversion is attempted in order:
+    weasyprint  → best typography, requires Pango/Cairo native libs
+    pandoc      → system command, if installed
+
+If none of these are usable, export_conversation_to_pdf raises
+PdfEngineUnavailable with an actionable message.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import subprocess
 import tempfile
 from datetime import datetime
 from typing import Any
@@ -155,34 +158,173 @@ def export_conversation_to_pdf(conv: dict[str, Any], output_path: str) -> str:
 
 
 def _invoke_converter(md_path: str, pdf_path: str) -> None:
-    """Call base_CAi.utils.convert_markdown_to_pdf and translate failures
-    into a single PdfEngineUnavailable with guidance.
+    """Convert `md_path` → `pdf_path` using the first backend that works.
+
+    Tries weasyprint first (best typography), then pandoc. Raises
+    PdfEngineUnavailable if neither is usable.
     """
+    # 1) weasyprint
     try:
-        from base_CAi.utils import convert_markdown_to_pdf
+        return _weasyprint_convert(md_path, pdf_path)
+    except _WeasyprintMissing:
+        pass  # weasyprint not installed — try next backend
+    except _WeasyprintNativeMissing as e:
+        # Installed but native DLLs (Pango / Cairo) missing. This is
+        # the most common Windows failure — surface it clearly and
+        # don't fall back, because the user clearly wanted weasyprint.
+        raise PdfEngineUnavailable(
+            "weasyprint is installed but its native dependencies "
+            "(Pango / Cairo) could not be loaded. On Windows see: "
+            "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html"
+            f"\nUnderlying error: {e}"
+        ) from e
+
+    # 2) pandoc fallback
+    try:
+        return _pandoc_convert(md_path, pdf_path)
+    except _PandocMissing:
+        pass
+
+    raise PdfEngineUnavailable(
+        "No PDF backend available on this system. Install one of:\n"
+        "  - weasyprint (pip install weasyprint, recommended)\n"
+        "  - pandoc (system binary)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# weasyprint backend
+# ---------------------------------------------------------------------------
+
+
+class _WeasyprintMissing(Exception):
+    """weasyprint isn't installed at all."""
+
+
+class _WeasyprintNativeMissing(Exception):
+    """weasyprint is importable but native deps (Pango / Cairo) aren't loadable."""
+
+
+def _weasyprint_convert(md_path: str, pdf_path: str) -> None:
+    """Render Markdown → styled HTML → PDF with weasyprint."""
+    try:
+        from weasyprint import HTML  # noqa: F401 — used below
     except ImportError as e:
-        raise PdfEngineUnavailable(f"convert_markdown_to_pdf unavailable: {e}") from e
+        raise _WeasyprintMissing() from e
+    except OSError as e:
+        # On Windows, weasyprint raises OSError when ctypes can't find
+        # libpango-1.0-0.dll etc. at import time.
+        raise _WeasyprintNativeMissing(str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        msg = str(e).lower()
+        if any(hint in msg for hint in ("dll", "pango", "cairo", "gobject")):
+            raise _WeasyprintNativeMissing(str(e)) from e
+        raise
 
     try:
-        convert_markdown_to_pdf(md_path, pdf_path)
+        import markdown as _md
     except ImportError as e:
-        # This is the explicit signal from the upstream helper that no
-        # backend (weasyprint, markdown2pdf, pandoc) could be used.
-        raise PdfEngineUnavailable(
-            "No PDF backend available on this system. Install one of:\n"
-            "  - weasyprint (recommended)\n"
-            "  - markdown2pdf\n"
-            "  - pandoc (system binary)"
+        raise _WeasyprintMissing(
+            "weasyprint requires the 'markdown' package: pip install markdown"
         ) from e
-    except Exception as e:
-        # weasyprint on Windows commonly fails at import time due to missing
-        # native DLLs (libpango, libcairo). Surface that clearly.
-        msg = str(e).lower()
-        if "dll" in msg or "pango" in msg or "cairo" in msg or "gobject" in msg:
-            raise PdfEngineUnavailable(
-                "PDF backend (weasyprint) is installed but its native "
-                "dependencies (Pango / Cairo) are missing. On Windows see: "
-                "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html"
-                f"\nUnderlying error: {e}"
-            ) from e
-        raise
+
+    from weasyprint import HTML
+    from weasyprint.text.fonts import FontConfiguration
+
+    with open(md_path, encoding="utf-8") as f:
+        md_content = f.read()
+
+    html_body = _md.markdown(md_content, extensions=["fenced_code", "tables"])
+    html_doc = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<style>{_PDF_CSS}</style></head><body>"
+        f"{html_body}"
+        "</body></html>"
+    )
+    HTML(string=html_doc).write_pdf(
+        pdf_path,
+        font_config=FontConfiguration(),
+        optimize_images=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# pandoc backend
+# ---------------------------------------------------------------------------
+
+
+class _PandocMissing(Exception):
+    """pandoc isn't installed."""
+
+
+def _pandoc_convert(md_path: str, pdf_path: str) -> None:
+    try:
+        subprocess.run(
+            ["pandoc", md_path, "-o", pdf_path],
+            check=True,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        if isinstance(e, FileNotFoundError):
+            raise _PandocMissing() from e
+        # pandoc exists but failed — surface as PDF-engine error
+        raise PdfEngineUnavailable(
+            f"pandoc failed while converting to PDF: {e.stderr.decode(errors='replace')}"
+        ) from e
+
+
+# ---------------------------------------------------------------------------
+# Stylesheet for the weasyprint backend
+# ---------------------------------------------------------------------------
+
+_PDF_CSS = """
+body {
+    font-family: sans-serif;
+    font-size: 10pt;
+    line-height: 1.45;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    color: #2c3e50;
+}
+h1, h2, h3, h4 {
+    font-family: sans-serif;
+    color: #1f2d3d;
+    margin-top: 1.0em;
+    margin-bottom: 0.4em;
+}
+h1 { font-size: 16pt; border-bottom: 2px solid #3498db; padding-bottom: 6px; }
+h2 { font-size: 13pt; border-bottom: 1px solid #bdc3c7; padding-bottom: 3px; }
+h3 { font-size: 11pt; }
+h4 { font-size: 10pt; }
+code {
+    background-color: #f4f6f8;
+    padding: 1px 4px;
+    border-radius: 2px;
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 9pt;
+}
+pre {
+    background-color: #f4f6f8;
+    padding: 10px;
+    border-radius: 3px;
+    border-left: 3px solid #3498db;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 9pt;
+}
+pre code { background: transparent; padding: 0; font-size: 9pt; }
+blockquote {
+    border-left: 3px solid #bdc3c7;
+    margin: 0.5em 0;
+    padding-left: 15px;
+    color: #4a5968;
+    font-size: 9pt;
+}
+table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 0.5em 0; }
+th, td { border: 1px solid #bdc3c7; padding: 4px 8px; text-align: left; }
+th { background-color: #ecf0f1; font-weight: bold; }
+img { max-width: 100%; height: auto; }
+p { margin: 0.3em 0; }
+"""
