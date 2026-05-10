@@ -244,3 +244,41 @@ Step-by-step instructions...
 ```
 
 The file name (without `.md`) becomes the skill ID.
+
+---
+
+## Testing
+
+The project uses pytest. Install dev dependencies:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Run the full suite:
+
+```bash
+pytest
+```
+
+Test layout:
+
+```
+tests/
+├── conftest.py                  # FakeLLM fixtures, no credentials needed
+├── test_parse_response.py       # BaseAgent message parsing (11 tests)
+├── test_prompt_building.py      # System prompt construction (12 tests)
+├── test_agent_execution.py      # Stateless history, code execution, tool reg (10 tests)
+└── test_web_concurrency.py      # SSE parsing + chat lock serialisation (6 tests)
+```
+
+All tests use a `FakeLLM` stub that returns scripted responses — no network
+calls, no API keys, no LLM credentials required. Tests run in ~1.5 seconds.
+
+Key invariants exercised:
+- Conversation history is passed explicitly; nothing leaks between calls
+- The `_chat_lock` in the web backend truly serialises concurrent requests
+- `<done/>` does not bleed into the "thinking" or "text" output fields
+- Tool docstrings are truncated before the `Args:` section in the prompt
+- Skill meta-tools (`get_skill_content`, `list_available_skills`) are hidden
+  from the main tool catalog

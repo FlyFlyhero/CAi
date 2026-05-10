@@ -57,9 +57,14 @@ class A1pro(BaseAgent):
         self.exclude_tools = exclude_tools or []
         self._loaded_tools: dict[str, callable] = {}
 
-        # Skills
-        self.skill_loader = SkillLoader(skills_dir)
+        # Skills — only initialise the loader if auto_load_skills is on.
+        # Otherwise keep it as None so the prompt builder will skip the
+        # skills section entirely.
         self.exclude_skills = exclude_skills or []
+        if auto_load_skills:
+            self.skill_loader = SkillLoader(skills_dir)
+        else:
+            self.skill_loader = None
 
         # Init base (builds LLM + workflow, uses our system_prompt property)
         super().__init__(
@@ -79,8 +84,10 @@ class A1pro(BaseAgent):
         self.system_prompt = self._build_system_prompt()
 
         # Log summary
-        logger.info(f"A1pro ready — {len(self._loaded_tools)} tools, "
-                    f"{len(self.skill_loader.get_skill_summaries())} skills")
+        logger.info(
+            f"A1pro ready — {len(self._loaded_tools)} tools, "
+            f"{len(self.list_skills())} skills"
+        )
 
     # ------------------------------------------------------------------
     # Tool loading
@@ -199,6 +206,9 @@ COMPLETION:
 
     def _section_skills(self) -> str:
         """Skills catalog — SOPs available for complex tasks."""
+        if self.skill_loader is None:
+            return ""
+
         summaries = self.skill_loader.get_skill_summaries()
         summaries = [s for s in summaries if s["id"] not in self.exclude_skills]
 
@@ -258,7 +268,9 @@ COMPLETION:
         return list(self._loaded_tools.keys())
 
     def list_skills(self) -> list[dict]:
-        """Return skill summaries."""
+        """Return skill summaries (empty list if skills are disabled)."""
+        if self.skill_loader is None:
+            return []
         return self.skill_loader.get_skill_summaries()
 
     def reload_tools(self):
@@ -271,7 +283,10 @@ COMPLETION:
         logger.info("Tools reloaded")
 
     def reload_skills(self):
-        """Hot-reload skills from disk."""
+        """Hot-reload skills from disk (no-op if skills are disabled)."""
+        if self.skill_loader is None:
+            logger.warning("reload_skills called but skills are disabled")
+            return
         self.skill_loader.reload()
         self.system_prompt = self._build_system_prompt()
         logger.info("Skills reloaded")

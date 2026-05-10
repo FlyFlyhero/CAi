@@ -91,19 +91,33 @@ def _build_prompt(text: str, ref_files: list[str]) -> str:
 
 
 def _extract_parts(content: str) -> dict:
-    """Extract structured parts from agent response."""
+    """Extract structured parts from agent response.
+
+    Classifies content into buckets:
+      - thinking   : narrative text that comes before <execute>/<observation>
+      - code       : content of <execute>...</execute> blocks
+      - observation: content of <observation>...</observation> blocks
+      - text       : standalone text response (used when there's no code)
+
+    Note: <done/> is a pure terminator and does NOT shift text into "thinking".
+    A message like "Final answer. <done/>" has text = "Final answer."
+    """
     parts = {}
 
-    # Thinking (text before any tags)
-    tag_positions = [
-        content.find(tag)
-        for tag in ["<execute>", "<observation>", "<done"]
-        if tag in content
-    ]
-    if tag_positions:
-        thinking = content[: min(tag_positions)].strip()
-        if thinking:
-            parts["thinking"] = thinking
+    has_execute = "<execute>" in content
+    has_observation = "<observation>" in content
+
+    # "Thinking" only makes sense when there's actual code/observation after it.
+    if has_execute or has_observation:
+        tag_positions = [
+            content.find(tag)
+            for tag in ("<execute>", "<observation>")
+            if tag in content
+        ]
+        if tag_positions:
+            thinking = content[: min(tag_positions)].strip()
+            if thinking:
+                parts["thinking"] = thinking
 
     # Code blocks
     code_blocks = re.findall(r"<execute>(.*?)</execute>", content, re.DOTALL)
@@ -115,8 +129,8 @@ def _extract_parts(content: str) -> dict:
     if obs_blocks:
         parts["observation"] = "\n\n".join(b.strip() for b in obs_blocks)
 
-    # If no tags at all, the whole thing is text
-    if not parts:
+    # If there's no code/observation, treat the whole (de-tagged) message as text
+    if "code" not in parts and "observation" not in parts:
         cleaned = re.sub(r"<done\s*/?>", "", content).strip()
         if cleaned:
             parts["text"] = cleaned
