@@ -2,17 +2,20 @@
 
 ## Overview
 
-CAi uses a two-layer agent architecture designed for clarity and extensibility.
+CAi has a layered architecture designed around composition:
 
 ```
-BaseAgent  (CAi/CAi_agent/base.py)
+BaseAgent  (execution core: LangGraph + LLM + REPL)
     │
-    └── A1pro  (CAi/CAi_agent/agent.py)
+    └── A1pro  (orchestrator — wires everything below)
+              ├── prompt/   (PromptBuilder + sections)
+              ├── tools/    (ToolRegistry + ReplBridge + Scanners)
+              ├── skills/   (SkillLoader — SOP markdown files)
+              └── web_ui/   (FastAPI + static frontend)
 ```
 
-**BaseAgent** handles the core execution loop — LLM calls, code execution, and the LangGraph state machine. It has no domain knowledge and no tool dependencies.
-
-**A1pro** extends BaseAgent with drug-discovery-specific capabilities: tool loading, skills (SOPs), and a domain-aware system prompt.
+Each subsystem is small, testable in isolation, and depends only on the
+layer below it.
 
 ---
 
@@ -26,9 +29,10 @@ Responsibilities:
 - Execute Python and Bash code in a sandboxed REPL
 - Parse LLM responses (mixed text + code)
 
-### Interaction modes
+Deliberately excludes: tool registration, prompt composition, skill
+handling, UI. Those live in dedicated subsystems that A1pro wires up.
 
-BaseAgent supports three response modes in a single turn:
+### Interaction modes
 
 | Mode | When to use | How |
 |---|---|---|
@@ -55,9 +59,110 @@ START → generate ──► execute ──► generate
 ### Public API
 
 ```python
-agent.run(prompt, thread_id)                    # blocking, returns (log, final_content)
-agent.run_stream(prompt, thread_id)             # generator of {"type", "content"} dicts
-agent.run_with_history(prompt, history, thread_id)  # with prior conversation context
+agent.run(prompt)                              # blocking, returns (log, final_content)
+agent.run_stream(prompt)                       # generator of {"type", "content"} dicts
+agent.run_with_history(prompt, history)        # with prior conversation context
+```
+
+The agent is stateless — history is passed explicitly per call.
+
+---
+
+## Prompt subsystem
+
+`CAi/CAi_agent/prompt/`
+
+Composition over inheritance. Every section of the system prompt is a
+`PromptSection` object; `PromptBuilder` assembles them.
+
+```
+prompt/
+├── section.py     # PromptSection ABC — single abstract method: render() -> str
+├── builder.py     # PromptBuilder — fluent, drops empty sections
+└── sections.py    # CoreSection, ToolsSection, SkillsSection
+```
+
+Example of composing a prompt:
+
+```python
+prompt = (
+    PromptBuilder()
+    .add(CoreSection())                       # persona + interaction rules
+    .add(ToolsSection(tool_registry))         # reads from registry
+    .add(SkillsSection(skill_loader))         # reads from loader
+    .build()
+)
+```
+
+Adding a new section is a one-file change: subclass `PromptSection`,
+implement `render()`, and `.add(YourSection())` in A1pro's constructor.
+A1pro's own code doesn't need to grow.
+
+Sections whose `render()` returns an empty string are silently dropped
+from the output, so conditional inclusion is free.
+
+---
+
+## Tools subsystem
+
+`CAi/CAi_agent/tools/`
+
+Four narrowly-scoped modules:
+
+```
+tools/
+├── spec.py         # ToolSpec — immutable tool descriptor
+├── registry.py     # ToolRegistry — observable in-memory catalog
+├── scanner.py      # ToolScanner + ModuleScanner — strategies for discovery
+└── repl_bridge.py  # ReplBridge — mirrors registry into builtins for REPL
+```
+
+### ToolSpec
+
+Frozen dataclass. `ToolSpec.from_function(func)` handles all the tedious
+work (extract name, compute `inspect.signature`, truncate docstring).
+Tools become data — you can pass them around, compare them, put them in sets.
+
+```python
+spec = ToolSpec.from_function(
+    my_func,
+    source="module:CAi.additional_tools",
+    hidden=False,          # show in prompt catalog?
+    tags={"chemistry"},
+)
+```
+
+### ToolRegistry
+
+The single source of truth. Observable — `on_change(callback)` lets
+subscribers react to additions and removals.
+
+```python
+registry = ToolRegistry()
+registry.register(spec)
+registry.on_change(rebuild_prompt)   # auto-refresh prompt when tools change
+```
+
+### ReplBridge
+
+Subscribes to a registry and keeps `builtins._base_CAi_custom_functions`
+in sync. Hidden tools are still injected (they're callable from code) —
+"hidden" only affects the prompt catalog.
+
+### ModuleScanner
+
+Strategy pattern for discovery. Current implementation scans a Python
+module's top-level functions. Future: `YamlConfigScanner`,
+`EntryPointScanner`, etc. — without touching A1pro.
+
+```python
+scanner = ModuleScanner(
+    "CAi.additional_tools",
+    exclude={"deprecated_fn"},
+    hidden={"get_skill_content", "list_available_skills"},
+)
+for spec in scanner.scan():
+    registry.register(spec)
 ```
 
 ---
@@ -66,58 +171,18 @@ agent.run_with_history(prompt, history, thread_id)  # with prior conversation co
 
 `CAi/CAi_agent/agent.py`
 
-Extends BaseAgent with:
+Thin orchestrator (~150 lines). Its job is to:
 
-### Tool loading
+1. Create a `ToolRegistry` and attach a `ReplBridge`
+2. Run a `ModuleScanner` against `CAi.additional_tools` to populate the registry
+3. Create a `SkillLoader` (optional)
+4. Initialize `BaseAgent` (LLM + LangGraph)
+5. Build a `PromptBuilder` with the three default sections
+6. Wire `registry.on_change` → auto-rebuild prompt
 
-Tools are loaded from `CAi/additional_tools` at startup. Each function is:
-1. Stored in `self._loaded_tools`
-2. Injected into `builtins._base_CAi_custom_functions` so the REPL can call it
-
-```python
-agent = A1pro(
-    tools_module="CAi.additional_tools",   # default
-    exclude_tools=["some_tool"],           # optional
-)
-agent.add_tool(my_func)    # add at runtime
-agent.remove_tool("name")  # remove at runtime
-agent.reload_tools()       # hot-reload from module
-```
-
-### Skills (SOPs)
-
-Skills are Markdown files in `CAi/CAi_agent/skills/`. They define pre-validated step-by-step workflows for recurring tasks (molecule analysis, virtual screening, etc.).
-
-Only the catalog (name + description) is loaded into the system prompt. The full workflow is fetched on demand:
-
-```python
-from CAi.additional_tools.get_skills_content import get_skill_content
-workflow = get_skill_content("molecule_analysis")
-```
-
-```python
-agent.reload_skills()                  # hot-reload from disk
-agent.list_skills()                    # list summaries
-```
-
-### System prompt structure
-
-The system prompt has three sections, totaling ~1,700 tokens:
-
-```
-1. Core instructions     (~400 tokens)
-   - Interaction modes
-   - Execution rules
-   - Planning protocol
-
-2. Tool catalog          (~1,100 tokens)
-   - One entry per tool: signature + short description
-   - Import instruction
-
-3. Skills catalog        (~200 tokens)
-   - One entry per skill: id + description + use cases
-   - How to load full workflow
-```
+All the public methods (`add_tool`, `remove_tool`, `list_tools`,
+`reload_tools`, `list_skills`, `reload_skills`) delegate to the
+appropriate subsystem.
 
 ---
 
@@ -128,13 +193,13 @@ The system prompt has three sections, totaling ~1,700 tokens:
 ```
 web_ui/
 ├── backend/
-│   ├── app.py              # FastAPI — chat, files, conversations
-│   └── conversation_store.py  # JSON-based persistence
+│   ├── app.py                  # FastAPI — chat, files, conversations
+│   └── conversation_store.py   # JSON-based persistence
 ├── frontend/
 │   ├── index.html
 │   ├── app.js
 │   └── styles.css
-└── launch.py               # uvicorn launcher
+└── launch.py                   # uvicorn launcher
 ```
 
 ### Chat flow
@@ -142,12 +207,12 @@ web_ui/
 ```
 POST /api/chat
     │
+    ├── Acquire _chat_lock (asyncio.Lock) — serialises concurrent requests
     ├── Load conversation history from ConversationStore
     ├── Build prompt (user message + workspace path + file refs)
-    ├── Call agent.run_with_history(prompt, history, thread_id=conv_id)
+    ├── Call agent.run_with_history(prompt, history)
     │       │
     │       └── Streams {"type", "content"} dicts
-    │               type: "thinking" | "code" | "observation" | "text"
     │
     ├── Emit SSE events to frontend
     └── Persist user + assistant messages to ConversationStore
@@ -173,7 +238,7 @@ POST /api/chat
 ```
 agent_workspace/
 └── _conversations/
-    ├── index.json          # metadata index (id, title, timestamps, message_count)
+    ├── index.json          # metadata index
     └── conv_<id>.json      # full message list per conversation
 ```
 
@@ -181,10 +246,9 @@ agent_workspace/
 
 ## Configuration
 
-All configuration lives in `CAi/config.py`, loaded from `CAi/.env`:
+All user-facing configuration lives in `CAi/config.py`, loaded from `CAi/.env`:
 
 ```bash
-# CAi/.env
 LLM_MODEL=claude-sonnet-4-5-20250929
 LLM_BASE_URL=http://your-endpoint/v1/
 LLM_API_KEY=your_key
@@ -194,8 +258,6 @@ TOOL_SERVER_PORT=8001
 WEB_BACKEND_PORT=8000
 ```
 
-`base_CAi/config.py` (`default_config`) is used only by the LLM factory and is not the primary config source for A1pro.
-
 ---
 
 ## Adding tools
@@ -204,21 +266,27 @@ WEB_BACKEND_PORT=8000
 2. Export it from `CAi/additional_tools/__init__.py`
 3. Restart the agent (or call `agent.reload_tools()`)
 
-The function's docstring becomes its description in the system prompt. Keep the first paragraph concise — everything after `Args:` is truncated.
+The function's docstring becomes its catalog description. Text after
+`Args:` is truncated, so keep the summary in the first paragraph.
 
 ```python
 def my_tool(smiles: str, n: int = 10) -> str:
     """
     One-line summary of what this tool does.
 
-    Optionally a second paragraph with more detail.
-    This is included in the prompt.
+    Optional second paragraph with more detail — still included in the prompt.
 
     Args:
-        smiles: Input molecule SMILES
+        smiles: Input molecule SMILES        # truncated out of the prompt
         n: Number of results
     """
     ...
+```
+
+To register a tool without exposing it in the prompt (for skill helpers etc.):
+
+```python
+agent.add_tool(helper_fn, hidden=True)
 ```
 
 ## Adding skills
@@ -245,6 +313,24 @@ Step-by-step instructions...
 
 The file name (without `.md`) becomes the skill ID.
 
+## Adding a custom prompt section
+
+Subclass `PromptSection`, wire it into A1pro:
+
+```python
+from CAi.CAi_agent.prompt import PromptSection
+
+class WorkspaceSection(PromptSection):
+    def __init__(self, workspace_dir: str):
+        self.workspace_dir = workspace_dir
+    def render(self) -> str:
+        return f"Your workspace directory is: {self.workspace_dir}"
+
+# In A1pro.__init__ (or after construction):
+agent.prompt_builder.add(WorkspaceSection("/tmp/work"))
+agent._rebuild_prompt()
+```
+
 ---
 
 ## Testing
@@ -261,24 +347,32 @@ Run the full suite:
 pytest
 ```
 
-Test layout:
+### Test layout
 
 ```
 tests/
-├── conftest.py                  # FakeLLM fixtures, no credentials needed
-├── test_parse_response.py       # BaseAgent message parsing (11 tests)
-├── test_prompt_building.py      # System prompt construction (12 tests)
-├── test_agent_execution.py      # Stateless history, code execution, tool reg (10 tests)
-└── test_web_concurrency.py      # SSE parsing + chat lock serialisation (6 tests)
+├── conftest.py                 # FakeLLM fixtures, no credentials needed
+├── test_parse_response.py      # BaseAgent message parsing           (11 tests)
+├── test_prompt_builder.py      # PromptBuilder + concrete sections   (17 tests)
+├── test_prompt_building.py     # A1pro prompt integration            (10 tests)
+├── test_tool_spec.py           # ToolSpec.from_function              (12 tests)
+├── test_tool_registry.py       # Registry CRUD + observer            (15 tests)
+├── test_tool_scanner.py        # ModuleScanner discovery             ( 8 tests)
+├── test_repl_bridge.py         # Registry → builtins sync            ( 8 tests)
+├── test_agent_execution.py     # Stateless history, tools, code      (10 tests)
+└── test_web_concurrency.py     # SSE parsing + chat lock             ( 6 tests)
+                                  Total: 97 tests, ~1.5s runtime
 ```
 
-All tests use a `FakeLLM` stub that returns scripted responses — no network
-calls, no API keys, no LLM credentials required. Tests run in ~1.5 seconds.
+All tests use a `FakeLLM` stub that returns scripted responses — no
+network, no API keys, no credentials required.
 
-Key invariants exercised:
+### Key invariants exercised
+
 - Conversation history is passed explicitly; nothing leaks between calls
-- The `_chat_lock` in the web backend truly serialises concurrent requests
-- `<done/>` does not bleed into the "thinking" or "text" output fields
+- The `_chat_lock` in the web backend serialises concurrent requests
+- `<done/>` does not bleed into "thinking" or "text" output fields
 - Tool docstrings are truncated before the `Args:` section in the prompt
-- Skill meta-tools (`get_skill_content`, `list_available_skills`) are hidden
-  from the main tool catalog
+- Registry observers are fail-isolated (one bad listener doesn't block others)
+- ReplBridge injects hidden tools (callable) but ToolsSection omits them (catalog)
+- PromptBuilder drops sections that render to an empty string

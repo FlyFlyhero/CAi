@@ -1,33 +1,40 @@
 """
 A1pro — CAi 的主力 Agent
 
-继承 BaseAgent（轻量 LangGraph 基类），增加：
-- additional_tools 自动加载
-- Skills（SOP）目录 + 按需加载
-- 精简系统提示词
+A1pro 本身只做编排工作：
+- 装配 ToolRegistry + ReplBridge（工具子系统）
+- 装配 SkillLoader（可选）
+- 装配 PromptBuilder（提示词子系统）
+- 继承 BaseAgent 获得 LangGraph workflow
+
+所有脏活（扫描、拼提示词、REPL 注入）都委托给专职模块。
 """
 
-import builtins
-import importlib
-import inspect
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
 
 from CAi.CAi_agent.base import BaseAgent
+from CAi.CAi_agent.prompt import (
+    CoreSection,
+    PromptBuilder,
+    SkillsSection,
+    ToolsSection,
+)
 from CAi.CAi_agent.skills import SkillLoader
+from CAi.CAi_agent.tools import ModuleScanner, ReplBridge, ToolRegistry, ToolSpec
 from CAi.logger import get_logger
 
 logger = get_logger("CAi.A1pro")
 
+# These helper tools are used by skills themselves. They should be callable
+# from the REPL but NOT advertised in the tool catalog — skills document
+# when to use them in the SKILLS section instead.
+_SKILL_HELPER_TOOLS = frozenset({"get_skill_content", "list_available_skills"})
+
 
 class A1pro(BaseAgent):
-    """
-    CAi 主力 Agent。
-
-    特性：
-    - 基于 BaseAgent 的混合交互模式（文本 + 代码执行）
-    - 自动加载 additional_tools
-    - Skills（SOP）按需加载
-    - 精简系统提示词（~3k tokens）
-    """
+    """CAi 主力 Agent。"""
 
     def __init__(
         self,
@@ -40,232 +47,111 @@ class A1pro(BaseAgent):
         # Tools
         auto_load_tools: bool = True,
         tools_module: str = "CAi.additional_tools",
-        exclude_tools: list[str] | None = None,
+        exclude_tools: Iterable[str] | None = None,
         # Skills
         auto_load_skills: bool = True,
         skills_dir: str | None = None,
-        exclude_skills: list[str] | None = None,
-        # Legacy compat (ignored, kept so callers don't break)
+        exclude_skills: Iterable[str] | None = None,
+        # Legacy compat (ignored, kept so older callers don't break)
         use_tool_retriever: bool = False,
         expected_data_lake_files: list | None = None,
         commercial_mode: bool = False,
         path: str | None = None,
         **kwargs,
     ):
-        # Tool state (must exist before super().__init__ triggers anything)
+        # -------- Tool subsystem ---------------------------------------
+        self.tool_registry = ToolRegistry()
+        self.repl_bridge = ReplBridge(self.tool_registry)
         self.tools_module = tools_module
-        self.exclude_tools = exclude_tools or []
-        self._loaded_tools: dict[str, callable] = {}
 
-        # Skills — only initialise the loader if auto_load_skills is on.
-        # Otherwise keep it as None so the prompt builder will skip the
-        # skills section entirely.
-        self.exclude_skills = exclude_skills or []
-        if auto_load_skills:
-            self.skill_loader = SkillLoader(skills_dir)
-        else:
-            self.skill_loader = None
+        if auto_load_tools:
+            scanner = ModuleScanner(
+                tools_module,
+                exclude=set(exclude_tools or []),
+                hidden=_SKILL_HELPER_TOOLS,
+            )
+            for spec in scanner.scan():
+                self.tool_registry.register(spec)
 
-        # Init base (builds LLM + workflow, uses our system_prompt property)
+        # -------- Skills -----------------------------------------------
+        self.exclude_skills = set(exclude_skills or [])
+        self.skill_loader: SkillLoader | None = (
+            SkillLoader(skills_dir) if auto_load_skills else None
+        )
+
+        # -------- Base agent (builds LLM + workflow) -------------------
         super().__init__(
             llm=llm,
             source=source,
             base_url=base_url,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
-            system_prompt=None,  # We'll build it after tools load
+            system_prompt="",  # overwritten right after by _rebuild_prompt
         )
 
-        # Load tools
-        if auto_load_tools:
-            self._load_tools()
+        # -------- Prompt subsystem -------------------------------------
+        self.prompt_builder = (
+            PromptBuilder()
+            .add(CoreSection())
+            .add(ToolsSection(self.tool_registry))
+            .add(SkillsSection(self.skill_loader, self.exclude_skills))
+        )
 
-        # Build final system prompt (needs _loaded_tools to be populated)
-        self.system_prompt = self._build_system_prompt()
+        # Registry → prompt: auto-rebuild whenever tools change.
+        self.tool_registry.on_change(self._rebuild_prompt)
+        self._rebuild_prompt()
 
-        # Log summary
         logger.info(
-            f"A1pro ready — {len(self._loaded_tools)} tools, "
-            f"{len(self.list_skills())} skills"
+            "A1pro ready — %d tools, %d skills",
+            len(self.tool_registry),
+            len(self.list_skills()),
         )
 
     # ------------------------------------------------------------------
-    # Tool loading
+    # Prompt refresh
     # ------------------------------------------------------------------
 
-    def _load_tools(self):
-        """Load all functions from the tools module."""
-        try:
-            module = importlib.import_module(self.tools_module)
-        except ModuleNotFoundError as e:
-            logger.error(f"Tools module not found: {self.tools_module} — {e}")
-            return
-
-        for name, func in inspect.getmembers(module, inspect.isfunction):
-            if name.startswith("_") or name in self.exclude_tools:
-                continue
-            self._register_tool(name, func)
-
-        logger.info(f"Loaded {len(self._loaded_tools)} tools from {self.tools_module}")
-
-    def _register_tool(self, name: str, func):
-        """Register a single tool — make it available in REPL and catalog."""
-        self._loaded_tools[name] = func
-        # Make callable in code execution
-        if not hasattr(builtins, "_base_CAi_custom_functions"):
-            builtins._base_CAi_custom_functions = {}
-        builtins._base_CAi_custom_functions[name] = func
-
-    def add_tool(self, func):
-        """Public API to add a tool at runtime."""
-        name = func.__name__
-        self._register_tool(name, func)
-        # Rebuild prompt to include new tool
-        self.system_prompt = self._build_system_prompt()
-        logger.info(f"Added tool: {name}")
-
-    def remove_tool(self, name: str):
-        """Remove a tool by name."""
-        if name in self._loaded_tools:
-            del self._loaded_tools[name]
-            if hasattr(builtins, "_base_CAi_custom_functions"):
-                builtins._base_CAi_custom_functions.pop(name, None)
-            self.system_prompt = self._build_system_prompt()
-            logger.info(f"Removed tool: {name}")
+    def _rebuild_prompt(self) -> None:
+        self.system_prompt = self.prompt_builder.build()
 
     # ------------------------------------------------------------------
-    # System prompt construction
+    # Tool API (backward compatible)
     # ------------------------------------------------------------------
 
-    def _build_system_prompt(self) -> str:
-        """Build the complete system prompt."""
-        sections = [
-            self._section_core(),
-            self._section_tools(),
-            self._section_skills(),
-        ]
-        return "\n\n".join(s for s in sections if s)
+    def add_tool(
+        self,
+        func: Callable,
+        *,
+        hidden: bool = False,
+        tags: Iterable[str] = (),
+    ) -> None:
+        """Register a tool at runtime. Prompt and REPL update automatically."""
+        spec = ToolSpec.from_function(func, hidden=hidden, tags=tags)
+        self.tool_registry.register(spec)
+        logger.info("Added tool: %s", spec.name)
 
-    def _section_core(self) -> str:
-        """Core instructions — execution protocol + interaction modes."""
-        return """\
-You are a drug discovery and medicinal chemistry AI assistant.
+    def remove_tool(self, name: str) -> bool:
+        """Remove a tool. Returns True if it existed."""
+        removed = self.tool_registry.unregister(name)
+        if removed:
+            logger.info("Removed tool: %s", name)
+        return removed
 
-INTERACTION MODES:
-1. DIRECT RESPONSE — For questions, explanations, discussions, or planning,
-   reply in plain text. No code needed.
-2. CODE EXECUTION — When you need to compute, call tools, or process data,
-   wrap code in <execute>...</execute>. Output appears in <observation>.
-3. MIXED — You can combine text explanation with code in one response.
+    def list_tools(self, *, include_hidden: bool = False) -> list[str]:
+        """Return registered tool names."""
+        return self.tool_registry.names(include_hidden=include_hidden)
 
-EXECUTION RULES:
-- Python is default. Use `#!BASH` for shell commands.
-- Always print() results so they appear in observations.
-- Import tools before use: `from CAi.additional_tools import tool_name`
-- Validate SMILES with RDKit before passing to tools.
-- Keep code simple. Break complex tasks into multiple rounds.
-- If code fails, analyze the error before retrying.
-
-PLANNING (for multi-step tasks):
-- Start with a numbered plan. Mark steps [✓] or [✗] as you go.
-- Update the plan after each step.
-
-COMPLETION:
-- When the task is fully done, end your message with <done/>
-- For simple questions, just answer directly (no <done/> needed)."""
-
-    def _section_tools(self) -> str:
-        """Tool catalog — one clean listing."""
-        if not self._loaded_tools:
-            return ""
-
-        lines = [
-            "AVAILABLE TOOLS",
-            "=" * 50,
-            "Import before use: `from CAi.additional_tools import <name>`",
-            "",
-        ]
-
-        for name, func in self._loaded_tools.items():
-            # Skip meta-tools (skill helpers) from the main listing
-            if name in ("get_skill_content", "list_available_skills"):
-                continue
-
-            sig = str(inspect.signature(func))
-            doc = (func.__doc__ or "").strip()
-
-            # Extract just the first paragraph (up to Args/Returns/Example)
-            short_doc = self._truncate_doc(doc, max_chars=400)
-
-            lines.append(f"▸ {name}{sig}")
-            for dline in short_doc.split("\n"):
-                lines.append(f"    {dline}")
-            lines.append("")
-
-        return "\n".join(lines)
-
-    def _section_skills(self) -> str:
-        """Skills catalog — SOPs available for complex tasks."""
-        if self.skill_loader is None:
-            return ""
-
-        summaries = self.skill_loader.get_skill_summaries()
-        summaries = [s for s in summaries if s["id"] not in self.exclude_skills]
-
-        if not summaries:
-            return ""
-
-        lines = [
-            "SKILLS — Standard Operating Procedures",
-            "=" * 50,
-            "",
-            "Skills are pre-validated workflows for recurring tasks.",
-            "When a user's request matches a skill, load it FIRST:",
-            "",
-            "  from CAi.additional_tools.get_skills_content import get_skill_content",
-            "  workflow = get_skill_content('<skill_id>')",
-            "  print(workflow)",
-            "",
-            "Then follow the workflow step-by-step.",
-            "",
-            "Available skills:",
-        ]
-
-        for s in summaries:
-            meta = s.get("metadata", {}) or {}
-            lines.append(f"")
-            lines.append(f"  • {s['id']} — {s['name']}")
-            lines.append(f"    {s['description'][:120]}")
-            if meta.get("use_cases"):
-                lines.append(f"    Use cases: {meta['use_cases']}")
-
-        return "\n".join(lines)
-
-    @staticmethod
-    def _truncate_doc(doc: str, max_chars: int = 400) -> str:
-        """Truncate docstring to first meaningful section."""
-        if not doc:
-            return "No description."
-
-        # Cut at Args/Returns/Example/Notes section
-        for marker in ("Args:", "Parameters:", "Returns:", "Example", "Notes:", "---"):
-            idx = doc.find(marker)
-            if idx > 0:
-                doc = doc[:idx].rstrip()
-                break
-
-        if len(doc) > max_chars:
-            doc = doc[:max_chars].rsplit("\n", 1)[0] + "\n    ..."
-
-        return doc
+    def reload_tools(self) -> None:
+        """Hot-reload tools from the configured module."""
+        self.tool_registry.clear()
+        scanner = ModuleScanner(self.tools_module, hidden=_SKILL_HELPER_TOOLS)
+        for spec in scanner.scan():
+            self.tool_registry.register(spec)
+        logger.info("Tools reloaded")
 
     # ------------------------------------------------------------------
-    # Convenience methods
+    # Skill API
     # ------------------------------------------------------------------
-
-    def list_tools(self) -> list[str]:
-        """Return names of all loaded tools."""
-        return list(self._loaded_tools.keys())
 
     def list_skills(self) -> list[dict]:
         """Return skill summaries (empty list if skills are disabled)."""
@@ -273,29 +159,21 @@ COMPLETION:
             return []
         return self.skill_loader.get_skill_summaries()
 
-    def reload_tools(self):
-        """Hot-reload tools from module."""
-        self._loaded_tools.clear()
-        if hasattr(builtins, "_base_CAi_custom_functions"):
-            builtins._base_CAi_custom_functions.clear()
-        self._load_tools()
-        self.system_prompt = self._build_system_prompt()
-        logger.info("Tools reloaded")
-
-    def reload_skills(self):
+    def reload_skills(self) -> None:
         """Hot-reload skills from disk (no-op if skills are disabled)."""
         if self.skill_loader is None:
             logger.warning("reload_skills called but skills are disabled")
             return
         self.skill_loader.reload()
-        self.system_prompt = self._build_system_prompt()
+        self._rebuild_prompt()
         logger.info("Skills reloaded")
 
     # ------------------------------------------------------------------
     # Web UI integration
     # ------------------------------------------------------------------
 
-    def launch_web_ui(self, port=7000, host="0.0.0.0"):
+    def launch_web_ui(self, port: int = 7000, host: str = "0.0.0.0") -> None:
         """Start the Web UI."""
         from CAi.web_ui.launch import launch
+
         launch(self, host=host, port=port)
