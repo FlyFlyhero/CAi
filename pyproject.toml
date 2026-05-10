@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "CAi"
-version = "0.1.0"  # 1. 这里改为了静态版本号，彻底解决找不到模块的报错
-description = "CAi"
+version = "0.1.0"
+description = "CAi Copilot - Drug discovery & medicinal chemistry AI agent"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
@@ -13,11 +13,22 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "pydantic",
-    "langchain",
-    "python-dotenv",
-    "fastapi",
-    "uvicorn"
+    # LLM stack
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
+    "langchain-anthropic>=0.2",
+    "langgraph>=0.2",
+    # Web backend
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",  # FastAPI file uploads
+    "pydantic>=2.0",
+    # Utilities
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+    # PDF export
+    "markdown>=3.5",
+    "weasyprint>=60.0",
 ]
 
 [project.urls]
@@ -25,93 +36,82 @@ Homepage = "https://github.com/snap-stanford/CAi"
 Repository = "https://github.com/snap-stanford/CAi"
 
 [project.optional-dependencies]
+# Legacy Gradio UI (superseded by the built-in Web UI)
 gradio = ["gradio>=5.0,<6.0"]
-chemistry = ["pyyaml"]  # biomiplus 化学工具的可选依赖
+# Chemistry toolkit extras
+chemistry = [
+    "rdkit",
+    "pyyaml",
+]
+# Development / testing
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "ruff>=0.5",
 ]
+
+[project.scripts]
+cai = "CAi.main:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["CAi*"]
-exclude = ["test*", "tutorials*"]
+exclude = ["tests*", "tutorials*", "example*", "docs*"]
 
+[tool.setuptools.package-data]
+"CAi.web_ui.frontend" = ["*.html", "*.css", "*.js"]
+
+# ---------------------------------------------------------------------------
+# Ruff linting
+# ---------------------------------------------------------------------------
 [tool.ruff]
-# 3. 移除了 src = ["src"]，因为你的代码直接在根目录下
 line-length = 120
+target-version = "py311"
+exclude = [
+    ".git",
+    ".venv",
+    "CAi/toolkit/server/tools/*/Lib-INVENT",  # vendored library
+    "CAi/toolkit/server/tools/*/REINVENT*",   # vendored library
+    "build",
+    "dist",
+]
 
 [tool.ruff.format]
 docstring-code-format = true
 
 [tool.ruff.lint]
 select = [
-    "F",      # Errors detected by Pyflakes
-    "E",      # Error detected by Pycodestyle
-    "W",      # Warning detected by Pycodestyle
+    "F",      # Pyflakes
+    "E",      # Pycodestyle errors
+    "W",      # Pycodestyle warnings
     "I",      # isort
-    #"D",      # pydocstyle
     "B",      # flake8-bugbear
     "TID",    # flake8-tidy-imports
     "C4",     # flake8-comprehensions
     "BLE",    # flake8-blind-except
     "UP",     # pyupgrade
-    "RUF100", # Report unused noqa directives
+    "RUF100", # Unused noqa
     "TCH",    # Typing imports
-    #"NPY",    # Numpy specific rules
-    #"PTH",    # Use pathlib
-    #"PL"      # pylint
 ]
 ignore = [
-    # line too long -> we accept long comment lines; black gets rid of long code lines
-    "E501",
-    # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
-    "E731",
-    # allow I, O, l as variable names -> I is the identity matrix
-    "E741",
-    # Missing docstring in public package
-    "D104",
-    # Missing docstring in public module
-    "D100",
-    # Missing docstring in __init__
-    "D107",
-    # Errors from function calls in argument defaults. These are fine when the result is immutable.
-    "B008",
-    # __magic__ methods are are often self-explanatory, allow missing docstrings
-    "D105",
-    # first line should end with a period [Bug: doesn't work with single-line docstrings]
-    "D400",
-    # First line should be in imperative mood; try rephrasing
-    "D401",
-    ## Disable one in each pair of mutually incompatible rules
-    # We don’t want a blank line before a class docstring
-    "D203",
-    # We want docstrings to start immediately after the opening triple quote
-    "D213",
-    # camcelcase imported as lowercase
-    "N813",
-    # module import not at top level of file
-    "E402",
-    # Too many arguments in function definition
-    "PLR0913",
-    # Too many branches
-    "PLR0912",
-    # magic value used in comparison
-    "PLR2004",
-    # Too many statements
-    "PLR0915",
-    # Extracting value from dictionary without calling `.items()` - clashes with sim
-    "PLC0206",
-    # import should be at top of file
-    "PLC0415",
-    # do not catch blind exception
-    "BLE001",
-    # strip with multi characters
-    "B005"
+    "E501",   # line too long
+    "E731",   # lambda assignment
+    "E741",   # ambiguous variable names (I, O, l)
+    "D104", "D100", "D107", "D105", "D400", "D401", "D203", "D213",
+    "B008",   # function call in default argument
+    "N813",   # camelcase imported as lowercase
+    "E402",   # module import not at top of file
+    "PLR0913", "PLR0912", "PLR2004", "PLR0915",
+    "PLC0206", "PLC0415",
+    "BLE001", # blind exception
+    "B005",
 ]
 
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

@@ -221,14 +221,14 @@ def setup_default_logger(
 
     # Read from environment variables if not provided
     if console_level is None:
-        console_level = os.getenv("BASE_CAI_LOG_LEVEL", "INFO")
+        console_level = os.getenv("CAI_LOG_LEVEL", "INFO")
     if file_level is None:
-        file_level = os.getenv("BASE_CAI_FILE_LOG_LEVEL", "DEBUG")
+        file_level = os.getenv("CAI_FILE_LOG_LEVEL", "DEBUG")
     if log_dir is None:
-        log_dir = os.getenv("BASE_CAI_LOG_DIR", "./logs")
+        log_dir = os.getenv("CAI_LOG_DIR", "./logs")
 
     _default_logger = CAiLogger(
-        name="base_CAi",
+        name="CAi",
         log_dir=log_dir,
         console_level=console_level,
         file_level=file_level,
