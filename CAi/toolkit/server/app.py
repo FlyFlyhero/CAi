@@ -1,17 +1,17 @@
 import asyncio
 import json
 import sys
-from contextlib import asynccontextmanager  # 1. 引入上下文管理器
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI
 
-# 加载全局配置
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from config import TOOL_SERVER_HOST, TOOL_SERVER_PORT
+# Load global config via a real package import instead of sys.path hacking.
+from CAi.config import TOOL_SERVER_HOST, TOOL_SERVER_PORT
 
-# 确保无论从哪个工作目录启动，都能找到同目录下的模块
+# Keep sibling modules (job_manager, tool_manager) importable when the
+# server is launched by script path rather than as part of the package.
 _SERVER_DIR = Path(__file__).resolve().parent
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
@@ -60,6 +60,20 @@ WORKSPACE = BASE_DIR / "workspace" / "jobs"
 # @app.on_event("startup")  <-- 这部分可以删掉了
 
 
+@app.get("/health")
+def health():
+    """Liveness / readiness probe.
+
+    Returns the list of loaded tools so callers can sanity-check the
+    server is configured correctly, not just reachable.
+    """
+    return {
+        "status": "ok",
+        "tools": sorted(tool_manager.tools.keys()),
+        "workspace": str(WORKSPACE),
+    }
+
+
 @app.get("/tools")
 def list_tools():
     return {"tools": {name: list(info["scripts"].keys()) for name, info in tool_manager.tools.items()}}
@@ -103,4 +117,18 @@ def job_status(job_id: str):
 
 
 if __name__ == "__main__":
+    print("=" * 60)
+    print("CAi Toolkit Server")
+    print("=" * 60)
+    tools_loaded = sorted(tool_manager.tools.keys())
+    if tools_loaded:
+        print(f"Loaded {len(tools_loaded)} tools:")
+        for t in tools_loaded:
+            actions = list(tool_manager.tools[t]["scripts"].keys())
+            print(f"  - {t}  (actions: {', '.join(actions)})")
+    else:
+        print("WARNING: no tools discovered in server/tools/.")
+    print(f"Workspace:  {WORKSPACE}")
+    print(f"Listening:  http://{TOOL_SERVER_HOST}:{TOOL_SERVER_PORT}")
+    print("=" * 60)
     uvicorn.run(app, host=TOOL_SERVER_HOST, port=TOOL_SERVER_PORT)

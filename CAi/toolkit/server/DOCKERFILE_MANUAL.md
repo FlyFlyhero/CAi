@@ -5,7 +5,7 @@
 ```
 CAi/                                  ← Docker build context（必须从这里执行构建）
 ├── config.py                         ← 服务器配置（端口等）
-└── additional_tools/server/
+└── toolkit/server/
     ├── Dockerfile                    ← 本文件对应的构建文件
     ├── docker-compose.yml
     ├── install_all.sh                ← 宿主机一键安装所有工具 conda 环境
@@ -61,13 +61,13 @@ conda run -n <conda_env> python <script_path>
 
 ```dockerfile
 # 第 4 节：只 COPY yml 文件到 /tmp/envs/
-COPY additional_tools/server/tools/my_tool/environment.yml /tmp/envs/my_tool.yml
+COPY toolkit/server/tools/my_tool/environment.yml /tmp/envs/my_tool.yml
 
 # 第 5 节：从 yml 创建环境（重量级，缓存）
 RUN conda env create -n my_env -f /tmp/envs/my_tool.yml && conda clean -afy
 
 # 第 6 节：COPY 源码（在所有环境安装完成后）
-COPY additional_tools/server/tools /app/server/tools
+COPY toolkit/server/tools /app/server/tools
 ```
 
 ---
@@ -142,7 +142,7 @@ echo "✅ 安装完成: conda activate ${ENV_NAME}"
 **① 在第 4 节（COPY yml 文件区）末尾追加：**
 ```dockerfile
 # my_new_tool
-COPY additional_tools/server/tools/my_new_tool/environment.yml /tmp/envs/my_new_tool.yml
+COPY toolkit/server/tools/my_new_tool/environment.yml /tmp/envs/my_new_tool.yml
 ```
 
 **② 在第 5 节（创建 conda 环境区）末尾追加对应 `RUN` 块：**
@@ -174,7 +174,7 @@ RUN conda create -n my_new_env python=3.11 -y \
 
 **③ 若工具需要 pip install 本地源码（如 rxnflow），在第 6 节首部追加：**
 ```dockerfile
-COPY additional_tools/server/tools/my_new_tool/my_lib /app/server/tools/my_new_tool/my_lib
+COPY toolkit/server/tools/my_new_tool/my_lib /app/server/tools/my_new_tool/my_lib
 RUN conda run -n my_new_env pip install --no-cache-dir \
         -e /app/server/tools/my_new_tool/my_lib \
     && conda clean -afy
@@ -205,17 +205,17 @@ RUN conda run -n my_new_env pip install --no-cache-dir \
 cd /path/to/CAi
 
 # 完整重新构建
-docker build -t tool-server -f additional_tools/server/Dockerfile .
+docker build -t tool-server -f toolkit/server/Dockerfile .
 
 # 指定代理（实验室网络环境）
 docker build \
     --build-arg HTTP_PROXY=http://proxy:port \
     --build-arg HTTPS_PROXY=http://proxy:port \
     -t tool-server \
-    -f additional_tools/server/Dockerfile .
+    -f toolkit/server/Dockerfile .
 
 # 或用 docker compose（推荐）
-docker compose -f additional_tools/server/docker-compose.yml up --build -d
+docker compose -f toolkit/server/docker-compose.yml up --build -d
 ```
 
 ---
@@ -245,7 +245,7 @@ docker run --gpus all \
 每个工具都有独立的 `install.sh`，可单独安装或通过顶层脚本一键安装：
 
 ```bash
-cd additional_tools/server
+cd toolkit/server
 
 # 安装所有工具
 ./install_all.sh

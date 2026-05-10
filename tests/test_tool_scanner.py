@@ -113,9 +113,9 @@ def test_respects_module_all_when_present():
         sys.modules.pop("_test_scan_mod_6", None)
 
 
-def test_scans_real_additional_tools_module():
-    """Smoke test against the actual CAi.additional_tools module."""
-    specs = list(ModuleScanner("CAi.additional_tools").scan())
+def test_scans_real_toolkit_module():
+    """Smoke test against the actual CAi.toolkit module."""
+    specs = list(ModuleScanner("CAi.toolkit").scan())
     # At least some tools should be discovered
     assert len(specs) > 0
     assert all(isinstance(s.name, str) for s in specs)

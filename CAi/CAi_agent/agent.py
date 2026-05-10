@@ -46,7 +46,7 @@ class A1pro(BaseAgent):
         timeout_seconds: int = 600,
         # Tools
         auto_load_tools: bool = True,
-        tools_module: str = "CAi.additional_tools",
+        tools_module: str = "CAi.toolkit",
         exclude_tools: Iterable[str] | None = None,
         # Skills
         auto_load_skills: bool = True,

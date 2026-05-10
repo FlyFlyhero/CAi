@@ -32,7 +32,7 @@ Agent receives the result and returns it to the LLM
 **Key design: every job has its own isolated sandbox directory**
 
 ```text
-additional_tools/server/workspace/jobs/
+toolkit/server/workspace/jobs/
 └── <uuid>/
     ├── params.json     ← input parameters (written by JobManager)
     ├── result.json     ← computation results (written by run.py)
@@ -48,7 +48,7 @@ The script working directory (`cwd`) is this UUID directory, so you can directly
 ## File Structure: The Three Required Files for a New Tool
 
 ```text
-additional_tools/server/tools/
+toolkit/server/tools/
 └── <your_tool_name>/           ← tool directory, and also the tool ID
     ├── config.json             ← required: declares environment, GPU requirement, action mapping
     ├── run.py                  ← main script (for a single-action tool)
@@ -185,7 +185,7 @@ if __name__ == "__main__":
 
 ## Step 3: Register the Agent Tool Function in `template_tools.py`
 
-After the backend script is ready, you still need to add a Python wrapper function in `additional_tools/template_tools.py` so the Agent can invoke it.
+After the backend script is ready, you still need to add a Python wrapper function in `toolkit/functions/` so the Agent can invoke it.
 
 ```python
 def calculate_scscore(smiles: str = None, smiles_list: list = None, model_type: str = "1024bool") -> str:

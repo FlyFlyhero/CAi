@@ -54,7 +54,7 @@ pip install -e .
 每个工具运行在独立的 Conda 环境中：
 
 ```bash
-cd CAi/additional_tools/server
+cd CAi/toolkit/server
 
 # 安装全部工具环境
 bash install_all.sh
@@ -63,14 +63,14 @@ bash install_all.sh
 bash install_all.sh vina scscore toxicity
 ```
 
-启动前请先从 [Google Drive](https://drive.google.com/drive/folders/1tjYJrMcVJnMopzbTyrf9KskvAxg2Xfin?usp=sharing) 下载工具源码，解压到 `CAi/additional_tools/server/tools/`。
+启动前请先从 [Google Drive](https://drive.google.com/drive/folders/1tjYJrMcVJnMopzbTyrf9KskvAxg2Xfin?usp=sharing) 下载工具源码，解压到 `CAi/toolkit/server/tools/`。
 
 ### 4. 启动工具后端
 
 ```bash
-# 在 CAi/ 目录下运行
-python additional_tools/server/app.py
-# 监听 http://0.0.0.0:8001
+# 在仓库根目录运行
+python -m CAi.toolkit.server.app
+# 监听 http://0.0.0.0:8001，访问 /health 可自检
 ```
 
 ### 5. 启动 Agent
@@ -124,15 +124,22 @@ CAi_copilot/
 │   ├── main.py                      # 启动入口
 │   ├── CAi_agent/
 │   │   ├── base.py                  # BaseAgent — LangGraph + LLM + REPL
-│   │   ├── agent.py                 # A1pro — 工具 + 技能 + 提示词
+│   │   ├── agent.py                 # A1pro — 编排层
+│   │   ├── prompt/                  # PromptBuilder + 各 Section
+│   │   ├── tools/                   # ToolRegistry + Scanner + ReplBridge
 │   │   └── skills/                  # SOP Markdown 文件
-│   ├── additional_tools/
-│   │   ├── template_tools.py        # Agent 可调用的工具函数
+│   ├── toolkit/                     # 面向 Agent 的药物发现工具集
+│   │   ├── client.py                # 工具服务端 HTTP 客户端
+│   │   ├── skill_helpers.py         # get_skill_content / list_available_skills
+│   │   ├── functions/
+│   │   │   ├── generation.py        # 6 个分子生成工具
+│   │   │   └── evaluation.py        # 4 个分子评估工具
 │   │   └── server/                  # 工具执行后端（FastAPI）
 │   └── web_ui/
 │       ├── backend/
 │       │   ├── app.py               # FastAPI 聊天 + 文件接口
-│       │   └── conversation_store.py
+│       │   ├── conversation_store.py
+│       │   └── pdf_export.py        # 对话 → Markdown → PDF
 │       └── frontend/                # 静态 HTML/JS/CSS
 ├── base_CAi/                        # LLM 工厂 + 代码执行工具
 └── docs/
@@ -142,10 +149,10 @@ CAi_copilot/
 ## 工具调用链路
 
 ```
-Agent（template_tools.py）
+Agent（CAi/toolkit/functions/*.py）
     │  POST /run/{tool}/{action}
     ▼
-工具后端（app.py）→ JobManager
+工具服务（CAi/toolkit/server/app.py）→ JobManager
     │  conda run -n <env> python run.py
     │  cwd = workspace/jobs/<uuid>/
     ▼
@@ -173,8 +180,8 @@ Agent 接收结果
 
 ### 添加工具
 
-1. 在 `CAi/additional_tools/template_tools.py` 中添加函数
-2. 在 `CAi/additional_tools/__init__.py` 中导出
+1. 在 `CAi/toolkit/functions/generation.py` 或 `evaluation.py` 中添加函数
+2. 在 `CAi/toolkit/__init__.py` 和 `functions/__init__.py` 中导出
 3. 重启 Agent 或调用 `agent.reload_tools()`
 
 ```python

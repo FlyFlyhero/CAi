@@ -3,8 +3,8 @@
 # Build context: CAi/ 目录（项目根）
 #
 # 构建命令（在 CAi/ 目录下执行）:
-#   docker build -t tool-server -f additional_tools/server/Dockerfile .
-#   docker compose -f additional_tools/server/docker-compose.yml up --build -d
+#   docker build -t tool-server -f toolkit/server/Dockerfile .
+#   docker compose -f toolkit/server/docker-compose.yml up --build -d
 # =============================================================================
 
 # ─── 基础镜像 ────────────────────────────────────────────────────────────────
@@ -57,13 +57,13 @@ RUN if [ -n "$HTTP_PROXY" ]; then \
 # =============================================================================
 WORKDIR /app
 
-COPY config.py                               /app/config.py
-COPY additional_tools/server/app.py          /app/server/app.py
-COPY additional_tools/server/job_manager.py  /app/server/job_manager.py
-COPY additional_tools/server/tool_manager.py /app/server/tool_manager.py
-COPY additional_tools/server/gpu_manager.py  /app/server/gpu_manager.py
-COPY additional_tools/server/install_all.sh  /app/server/install_all.sh
-COPY additional_tools/server/tools           /app/server/tools
+COPY config.py                        /app/config.py
+COPY toolkit/server/app.py            /app/server/app.py
+COPY toolkit/server/job_manager.py    /app/server/job_manager.py
+COPY toolkit/server/tool_manager.py   /app/server/tool_manager.py
+COPY toolkit/server/gpu_manager.py    /app/server/gpu_manager.py
+COPY toolkit/server/install_all.sh    /app/server/install_all.sh
+COPY toolkit/server/tools             /app/server/tools
 
 # =============================================================================
 # ─── 5. 使用 install_all.sh 一键安装工具 conda 环境 ───────────────────────────

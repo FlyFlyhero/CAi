@@ -38,7 +38,7 @@ class ToolSpec:
         func:       The callable itself.
         signature:  Pre-computed str(inspect.signature(func)).
         short_doc:  Docstring already truncated for prompt display.
-        source:     Provenance label (e.g. "module:CAi.additional_tools",
+        source:     Provenance label (e.g. "module:CAi.toolkit",
                     "runtime", "config:tools.yaml"). Purely informational.
         hidden:     If True, the tool is callable from REPL but is NOT listed
                     in the prompt's tool catalog (useful for skill helpers).

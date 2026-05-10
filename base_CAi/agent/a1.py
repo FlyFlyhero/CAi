@@ -129,7 +129,11 @@ class A1:
             if value is not None:
                 # Special formatting for commercial_mode
                 if key == "commercial_mode":
-                    mode_text = "Commercial (licensed datasets only)" if value else "Academic (all datasets)"
+                    mode_text = (
+                        "Commercial (licensed datasets only)"
+                        if value
+                        else "Academic (all datasets)"
+                    )
                     print(f"  {key.replace('_', ' ').title()}: {mode_text}")
                 else:
                     print(f"  {key.replace('_', ' ').title()}: {value}")
@@ -143,7 +147,9 @@ class A1:
             if base_url is not None:
                 print(f"  Base URL: {base_url}")
             if api_key is not None and api_key != "EMPTY":
-                print(f"  API Key: {'*' * 8 + api_key[-4:] if len(api_key) > 8 else '***'}")
+                print(
+                    f"  API Key: {'*' * 8 + api_key[-4:] if len(api_key) > 8 else '***'}"
+                )
 
         print("=" * 50 + "\n")
 
@@ -210,7 +216,9 @@ class A1:
         try:
             # Get function information
             inspect.getsource(api)
-            module_name = api.__module__ if hasattr(api, "__module__") else "custom_tools"
+            module_name = (
+                api.__module__ if hasattr(api, "__module__") else "custom_tools"
+            )
             function_name = api.__name__ if hasattr(api, "__name__") else str(api)
 
             # Generate API schema using the existing utility function
@@ -220,7 +228,9 @@ class A1:
             if not isinstance(schema, dict):
                 print(f"Error: Schema generation failed for {function_name}")
                 print(f"Received: {type(schema)} - {schema}")
-                raise ValueError(f"Generated schema is not a dictionary. Got: {type(schema)}")
+                raise ValueError(
+                    f"Generated schema is not a dictionary. Got: {type(schema)}"
+                )
 
             # Validate and enhance the schema
 
@@ -249,7 +259,9 @@ class A1:
             if hasattr(self, "tool_registry") and self.tool_registry is not None:
                 try:
                     self.tool_registry.register_tool(schema)
-                    print(f"Successfully registered tool '{schema['name']}' in tool registry")
+                    print(
+                        f"Successfully registered tool '{schema['name']}' in tool registry"
+                    )
                 except Exception as e:
                     print(f"Warning: Failed to register tool in registry: {e}")
                     # Continue with adding to module2api even if registry fails
@@ -271,7 +283,9 @@ class A1:
             if existing_tool:
                 # Update existing tool
                 existing_tool.update(schema)
-                print(f"Updated existing tool '{schema['name']}' in module '{module_name}'")
+                print(
+                    f"Updated existing tool '{schema['name']}' in module '{module_name}'"
+                )
             else:
                 # Add new tool
                 self.module2api[module_name].append(schema)
@@ -289,9 +303,13 @@ class A1:
                                 self.tool_registry.get_tool_by_id(int(tool_id)),
                             ]
                         )
-                    self.tool_registry.document_df = pd.DataFrame(docs, columns=["docid", "document_content"])
+                    self.tool_registry.document_df = pd.DataFrame(
+                        docs, columns=["docid", "document_content"]
+                    )
                 except Exception as e:
-                    print(f"Warning: Failed to update tool registry document dataframe: {e}")
+                    print(
+                        f"Warning: Failed to update tool registry document dataframe: {e}"
+                    )
 
             # Store the original function for potential future use
             if not hasattr(self, "_custom_functions"):
@@ -327,7 +345,9 @@ class A1:
             traceback.print_exc()
             raise
 
-    def add_mcp(self, config_path: str | Path = "./tutorials/examples/mcp_config.yaml") -> None:
+    def add_mcp(
+        self, config_path: str | Path = "./tutorials/examples/mcp_config.yaml"
+    ) -> None:
         """
         Add MCP (Model Context Protocol) tools from configuration file.
 
@@ -370,7 +390,11 @@ class A1:
 
                             # Get available tools
                             tools_result = await session.list_tools()
-                            tools = tools_result.tools if hasattr(tools_result, "tools") else tools_result
+                            tools = (
+                                tools_result.tools
+                                if hasattr(tools_result, "tools")
+                                else tools_result
+                            )
 
                             discovered_tools = []
                             for tool in tools:
@@ -383,7 +407,9 @@ class A1:
                                         }
                                     )
                                 else:
-                                    print(f"Warning: Skipping tool with no name attribute: {tool}")
+                                    print(
+                                        f"Warning: Skipping tool with no name attribute: {tool}"
+                                    )
 
                             return discovered_tools
 
@@ -392,13 +418,17 @@ class A1:
                 print(f"Failed to discover tools: {e}")
                 return []
 
-        def make_mcp_wrapper(cmd: str, args: list[str], tool_name: str, doc: str, env_vars: dict = None):
+        def make_mcp_wrapper(
+            cmd: str, args: list[str], tool_name: str, doc: str, env_vars: dict = None
+        ):
             """Create a synchronous wrapper for an async MCP tool call."""
 
             def sync_tool_wrapper(**kwargs):
                 """Synchronous wrapper for MCP tool execution."""
                 try:
-                    server_params = StdioServerParameters(command=cmd, args=args, env=env_vars)
+                    server_params = StdioServerParameters(
+                        command=cmd, args=args, env=env_vars
+                    )
 
                     async def async_tool_call():
                         async with stdio_client(server_params) as (reader, writer):
@@ -417,7 +447,9 @@ class A1:
                         return asyncio.run(async_tool_call())
 
                 except Exception as e:
-                    raise RuntimeError(f"MCP tool execution failed for '{tool_name}': {e}") from e
+                    raise RuntimeError(
+                        f"MCP tool execution failed for '{tool_name}': {e}"
+                    ) from e
 
             sync_tool_wrapper.__name__ = tool_name
             sync_tool_wrapper.__doc__ = doc
@@ -432,7 +464,9 @@ class A1:
             config_content = Path(config_path).read_text(encoding="utf-8")
             cfg: dict[str, Any] = yaml.safe_load(config_content) or {}
         except FileNotFoundError:
-            raise FileNotFoundError(f"MCP config file not found: {config_path}") from None
+            raise FileNotFoundError(
+                f"MCP config file not found: {config_path}"
+            ) from None
         except yaml.YAMLError as e:
             raise yaml.YAMLError(f"Invalid YAML in MCP config: {e}") from e
 
@@ -449,7 +483,9 @@ class A1:
             # Validate command configuration
             cmd_list = server_meta.get("command", [])
             if not cmd_list or not isinstance(cmd_list, list):
-                print(f"Warning: Invalid command configuration for server '{server_name}'")
+                print(
+                    f"Warning: Invalid command configuration for server '{server_name}'"
+                )
                 continue
 
             cmd, *args = cmd_list
@@ -459,7 +495,11 @@ class A1:
             if env_vars:
                 processed_env = {}
                 for key, value in env_vars.items():
-                    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+                    if (
+                        isinstance(value, str)
+                        and value.startswith("${")
+                        and value.endswith("}")
+                    ):
                         var_name = value[2:-1]
                         processed_env[key] = os.getenv(var_name, "")
                     else:
@@ -476,13 +516,19 @@ class A1:
 
             if not tools_config:
                 try:
-                    server_params = StdioServerParameters(command=cmd, args=args, env=env_vars)
+                    server_params = StdioServerParameters(
+                        command=cmd, args=args, env=env_vars
+                    )
                     tools_config = discover_mcp_tools_sync(server_params)
 
                     if tools_config:
-                        print(f"Discovered {len(tools_config)} tools from {server_name} MCP server")
+                        print(
+                            f"Discovered {len(tools_config)} tools from {server_name} MCP server"
+                        )
                     else:
-                        print(f"Warning: No tools discovered from {server_name} MCP server")
+                        print(
+                            f"Warning: No tools discovered from {server_name} MCP server"
+                        )
                         continue
 
                 except Exception as e:
@@ -515,7 +561,9 @@ class A1:
                     continue
 
                 # Create wrapper function
-                wrapper_function = make_mcp_wrapper(cmd, args, tool_name, description, env_vars)
+                wrapper_function = make_mcp_wrapper(
+                    cmd, args, tool_name, description, env_vars
+                )
 
                 # Add to module namespace
                 setattr(server_module, tool_name, wrapper_function)
@@ -616,7 +664,10 @@ class A1:
         # Remove from global namespace
         import builtins
 
-        if hasattr(builtins, "_base_CAi_custom_functions") and name in builtins._base_CAi_custom_functions:
+        if (
+            hasattr(builtins, "_base_CAi_custom_functions")
+            and name in builtins._base_CAi_custom_functions
+        ):
             del builtins._base_CAi_custom_functions[name]
 
         # Remove from tool registry
@@ -633,9 +684,13 @@ class A1:
                                 self.tool_registry.get_tool_by_id(int(tool_id)),
                             ]
                         )
-                    self.tool_registry.document_df = pd.DataFrame(docs, columns=["docid", "document_content"])
+                    self.tool_registry.document_df = pd.DataFrame(
+                        docs, columns=["docid", "document_content"]
+                    )
                 except Exception as e:
-                    print(f"Warning: Failed to update tool registry document dataframe: {e}")
+                    print(
+                        f"Warning: Failed to update tool registry document dataframe: {e}"
+                    )
 
         # Remove from module2api
         if hasattr(self, "module2api"):
@@ -664,7 +719,9 @@ class A1:
         """
         try:
             if not isinstance(data, dict):
-                raise ValueError("Data must be a dictionary with file path as key and description as value")
+                raise ValueError(
+                    "Data must be a dictionary with file path as key and description as value"
+                )
 
             # Initialize custom data storage if it doesn't exist
             if not hasattr(self, "_custom_data"):
@@ -673,11 +730,15 @@ class A1:
             # Add each data item
             for file_path, description in data.items():
                 if not isinstance(file_path, str) or not isinstance(description, str):
-                    print("Warning: Skipping invalid data entry - file_path and description must be strings")
+                    print(
+                        "Warning: Skipping invalid data entry - file_path and description must be strings"
+                    )
                     continue
 
                 # Extract filename from path for storage
-                filename = os.path.basename(file_path) if "/" in file_path else file_path
+                filename = (
+                    os.path.basename(file_path) if "/" in file_path else file_path
+                )
 
                 # Store the data with both the full path and description
                 self._custom_data[filename] = {
@@ -722,7 +783,9 @@ class A1:
 
         """
         if hasattr(self, "_custom_data"):
-            return [(name, info["description"]) for name, info in self._custom_data.items()]
+            return [
+                (name, info["description"]) for name, info in self._custom_data.items()
+            ]
         return []
 
     def remove_custom_data(self, name):
@@ -765,7 +828,9 @@ class A1:
         """
         try:
             if not isinstance(software, dict):
-                raise ValueError("Software must be a dictionary with software name as key and description as value")
+                raise ValueError(
+                    "Software must be a dictionary with software name as key and description as value"
+                )
 
             # Initialize custom software storage if it doesn't exist
             if not hasattr(self, "_custom_software"):
@@ -773,8 +838,12 @@ class A1:
 
             # Add each software item
             for software_name, description in software.items():
-                if not isinstance(software_name, str) or not isinstance(description, str):
-                    print("Warning: Skipping invalid software entry - software_name and description must be strings")
+                if not isinstance(software_name, str) or not isinstance(
+                    description, str
+                ):
+                    print(
+                        "Warning: Skipping invalid software entry - software_name and description must be strings"
+                    )
                     continue
 
                 # Store the software with description
@@ -821,7 +890,10 @@ class A1:
 
         """
         if hasattr(self, "_custom_software"):
-            return [(name, info["description"]) for name, info in self._custom_software.items()]
+            return [
+                (name, info["description"])
+                for name, info in self._custom_software.items()
+            ]
         return []
 
     def remove_custom_software(self, name):
@@ -866,7 +938,11 @@ class A1:
             commercial_use = metadata.get("commercial_use", "")
 
             # Check if commercial use is NOT allowed
-            if "❌" in commercial_use or "Not Allowed" in commercial_use or "Non-Commercial" in commercial_use:
+            if (
+                "❌" in commercial_use
+                or "Not Allowed" in commercial_use
+                or "Non-Commercial" in commercial_use
+            ):
                 docs_to_remove.append(doc_id)
 
         # Remove documents that don't allow commercial use
@@ -951,9 +1027,15 @@ class A1:
         custom_software_names = set()
 
         if custom_data:
-            custom_data_names = {item.get("name") if isinstance(item, dict) else item for item in custom_data}
+            custom_data_names = {
+                item.get("name") if isinstance(item, dict) else item
+                for item in custom_data
+            }
         if custom_software:
-            custom_software_names = {item.get("name") if isinstance(item, dict) else item for item in custom_software}
+            custom_software_names = {
+                item.get("name") if isinstance(item, dict) else item
+                for item in custom_software
+            }
 
         # Separate default data lake items
         for item in data_lake_content:
@@ -984,22 +1066,34 @@ class A1:
                 if ": " in item:
                     data_lake_formatted.append(item)
                 else:
-                    description = self.data_lake_dict.get(item, f"Data lake item: {item}")
-                    data_lake_formatted.append(format_item_with_description(item, description))
+                    description = self.data_lake_dict.get(
+                        item, f"Data lake item: {item}"
+                    )
+                    data_lake_formatted.append(
+                        format_item_with_description(item, description)
+                    )
         else:
             # List with descriptions
             data_lake_formatted = []
             for item in default_data_lake_content:
                 if isinstance(item, dict):
                     name = item.get("name", "")
-                    description = self.data_lake_dict.get(name, f"Data lake item: {name}")
-                    data_lake_formatted.append(format_item_with_description(name, description))
+                    description = self.data_lake_dict.get(
+                        name, f"Data lake item: {name}"
+                    )
+                    data_lake_formatted.append(
+                        format_item_with_description(name, description)
+                    )
                 # Check if the item already has a description (contains a colon)
                 elif isinstance(item, str) and ": " in item:
                     data_lake_formatted.append(item)
                 else:
-                    description = self.data_lake_dict.get(item, f"Data lake item: {item}")
-                    data_lake_formatted.append(format_item_with_description(item, description))
+                    description = self.data_lake_dict.get(
+                        item, f"Data lake item: {item}"
+                    )
+                    data_lake_formatted.append(
+                        format_item_with_description(item, description)
+                    )
 
         # Format the default library content
         if isinstance(default_library_content_list, list) and all(
@@ -1013,8 +1107,12 @@ class A1:
                 # Simple list of strings
                 libraries_formatted = []
                 for lib in default_library_content_list:
-                    description = self.library_content_dict.get(lib, f"Software library: {lib}")
-                    libraries_formatted.append(format_item_with_description(lib, description))
+                    description = self.library_content_dict.get(
+                        lib, f"Software library: {lib}"
+                    )
+                    libraries_formatted.append(
+                        format_item_with_description(lib, description)
+                    )
             else:
                 # Already formatted string
                 libraries_formatted = default_library_content_list
@@ -1024,11 +1122,19 @@ class A1:
             for lib in default_library_content_list:
                 if isinstance(lib, dict):
                     name = lib.get("name", "")
-                    description = self.library_content_dict.get(name, f"Software library: {name}")
-                    libraries_formatted.append(format_item_with_description(name, description))
+                    description = self.library_content_dict.get(
+                        name, f"Software library: {name}"
+                    )
+                    libraries_formatted.append(
+                        format_item_with_description(name, description)
+                    )
                 else:
-                    description = self.library_content_dict.get(lib, f"Software library: {lib}")
-                    libraries_formatted.append(format_item_with_description(lib, description))
+                    description = self.library_content_dict.get(
+                        lib, f"Software library: {lib}"
+                    )
+                    libraries_formatted.append(
+                        format_item_with_description(lib, description)
+                    )
 
         # Format custom resources with highlighting
         custom_tools_formatted = []
@@ -1048,10 +1154,14 @@ class A1:
                 if isinstance(item, dict):
                     name = item.get("name", "Unknown")
                     desc = item.get("description", "")
-                    custom_data_formatted.append(f"📊 {format_item_with_description(name, desc)}")
+                    custom_data_formatted.append(
+                        f"📊 {format_item_with_description(name, desc)}"
+                    )
                 else:
                     desc = self.data_lake_dict.get(item, f"Custom data: {item}")
-                    custom_data_formatted.append(f"📊 {format_item_with_description(item, desc)}")
+                    custom_data_formatted.append(
+                        f"📊 {format_item_with_description(item, desc)}"
+                    )
 
         custom_software_formatted = []
         if custom_software:
@@ -1059,10 +1169,16 @@ class A1:
                 if isinstance(item, dict):
                     name = item.get("name", "Unknown")
                     desc = item.get("description", "")
-                    custom_software_formatted.append(f"⚙️ {format_item_with_description(name, desc)}")
+                    custom_software_formatted.append(
+                        f"⚙️ {format_item_with_description(name, desc)}"
+                    )
                 else:
-                    desc = self.library_content_dict.get(item, f"Custom software: {item}")
-                    custom_software_formatted.append(f"⚙️ {format_item_with_description(item, desc)}")
+                    desc = self.library_content_dict.get(
+                        item, f"Custom software: {item}"
+                    )
+                    custom_software_formatted.append(
+                        f"⚙️ {format_item_with_description(item, desc)}"
+                    )
 
         # Format know-how documents - include FULL content (metadata already stripped)
         know_how_formatted = []
@@ -1146,7 +1262,12 @@ DRUG DISCOVERY GUIDELINES:
 
         # Add custom resources section first (highlighted)
         has_custom_resources = any(
-            [custom_tools_formatted, custom_data_formatted, custom_software_formatted, know_how_formatted]
+            [
+                custom_tools_formatted,
+                custom_data_formatted,
+                custom_software_formatted,
+                know_how_formatted,
+            ]
         )
 
         if has_custom_resources:
@@ -1169,7 +1290,7 @@ IMPORTANT: These documents are ALREADY AVAILABLE in your context. You do NOT nee
 
 These documents contain expert knowledge, tool usage methods, and relevant protocols. Before formulating a plan, you may call tools to view specific content if necessary. Please reference these documents directly for experimental design, methodology, and problem-solving.
 """
-             
+
             if custom_tools_formatted:
                 prompt_modifier += """
 🔧 CUSTOM TOOLS (USE THESE FIRST):
@@ -1231,9 +1352,7 @@ Each library is listed with its description to help you understand its functiona
         if is_retrieval:
             function_intro = "Based on your query, I've identified the following most relevant functions that you can use in your code:"
             data_lake_intro = "Based on your query, I've identified the following most relevant datasets:"
-            library_intro = (
-                "Based on your query, I've identified the following most relevant libraries that you can use:"
-            )
+            library_intro = "Based on your query, I've identified the following most relevant libraries that you can use:"
             import_instruction = "IMPORTANT: When using any function, you MUST first import it from its module. For example:\nfrom [module_name] import [function_name]"
         else:
             function_intro = "In your code, you will need to import the function location using the following dictionary of functions:"
@@ -1248,7 +1367,9 @@ Each library is listed with its description to help you understand its functiona
         # Format the prompt with the appropriate values
         format_dict = {
             "function_intro": function_intro,
-            "tool_desc": textify_api_dict(tool_desc) if isinstance(tool_desc, dict) else tool_desc,
+            "tool_desc": textify_api_dict(tool_desc)
+            if isinstance(tool_desc, dict)
+            else tool_desc,
             "import_instruction": import_instruction,
             "data_lake_path": self.path + "/data_lake",
             "data_lake_intro": data_lake_intro,
@@ -1325,26 +1446,42 @@ Each library is listed with its description to help you understand its functiona
                         module_name = "base_CAi.tool.scRNA_tools"
                         tool.module_name = module_name
                     tool_desc.setdefault(module_name, [])
-                    tool_desc[module_name].append({
-                        "name": getattr(tool, "name", str(tool)),
-                        "description": getattr(tool, "description", ""),
-                        "parameters": getattr(tool, "parameters", {}),
-                        "module": module_name,
-                    })
+                    tool_desc[module_name].append(
+                        {
+                            "name": getattr(tool, "name", str(tool)),
+                            "description": getattr(tool, "description", ""),
+                            "parameters": getattr(tool, "parameters", {}),
+                            "module": module_name,
+                        }
+                    )
 
         # --- data lake --------------------------------------------------
         if selected_resources is None:
-            data_lake_items = [Path(p).name for p in glob.glob(self.path + "/data_lake/*")]
+            data_lake_items = [
+                Path(p).name for p in glob.glob(self.path + "/data_lake/*")
+            ]
             data_lake_with_desc = [
-                {"name": item, "description": self.data_lake_dict.get(item, f"Data lake item: {item}")}
+                {
+                    "name": item,
+                    "description": self.data_lake_dict.get(
+                        item, f"Data lake item: {item}"
+                    ),
+                }
                 for item in data_lake_items
             ]
             if hasattr(self, "_custom_data") and self._custom_data:
                 for name, info in self._custom_data.items():
-                    data_lake_with_desc.append({"name": name, "description": info["description"]})
+                    data_lake_with_desc.append(
+                        {"name": name, "description": info["description"]}
+                    )
         else:
             data_lake_with_desc = [
-                {"name": item, "description": self.data_lake_dict.get(item, f"Data lake item: {item}")}
+                {
+                    "name": item,
+                    "description": self.data_lake_dict.get(
+                        item, f"Data lake item: {item}"
+                    ),
+                }
                 for item in selected_resources["data_lake"]
             ]
 
@@ -1361,15 +1498,27 @@ Each library is listed with its description to help you understand its functiona
         # --- custom resources (same in both modes) ----------------------
         custom_tools = [
             {"name": name, "description": info["description"], "module": info["module"]}
-            for name, info in (self._custom_tools.items() if hasattr(self, "_custom_tools") and self._custom_tools else [])
+            for name, info in (
+                self._custom_tools.items()
+                if hasattr(self, "_custom_tools") and self._custom_tools
+                else []
+            )
         ]
         custom_data = [
             {"name": name, "description": info["description"]}
-            for name, info in (self._custom_data.items() if hasattr(self, "_custom_data") and self._custom_data else [])
+            for name, info in (
+                self._custom_data.items()
+                if hasattr(self, "_custom_data") and self._custom_data
+                else []
+            )
         ]
         custom_software = [
             {"name": name, "description": info["description"]}
-            for name, info in (self._custom_software.items() if hasattr(self, "_custom_software") and self._custom_software else [])
+            for name, info in (
+                self._custom_software.items()
+                if hasattr(self, "_custom_software") and self._custom_software
+                else []
+            )
         ]
 
         # --- know-how ---------------------------------------------------
@@ -1384,7 +1533,9 @@ Each library is listed with its description to help you understand its functiona
                 #         "content": doc["content_without_metadata"],
                 #         "metadata": doc["metadata"],
                 #     })
-                print(f"📚 Loading {len(know_how_docs)} know-how documents into system prompt")
+                print(
+                    f"📚 Loading {len(know_how_docs)} know-how documents into system prompt"
+                )
         else:
             know_how_docs = selected_resources.get("know_how", [])
 
@@ -1440,12 +1591,18 @@ Each library is listed with its description to help you understand its functiona
             msg += "</think>"
 
         think_match = re.search(r"<think>(.*?)</think>", msg, re.DOTALL | re.IGNORECASE)
-        execute_match = re.search(r"<execute>(.*?)</execute>", msg, re.DOTALL | re.IGNORECASE)
-        answer_match = re.search(r"<solution>(.*?)</solution>", msg, re.DOTALL | re.IGNORECASE)
+        execute_match = re.search(
+            r"<execute>(.*?)</execute>", msg, re.DOTALL | re.IGNORECASE
+        )
+        answer_match = re.search(
+            r"<solution>(.*?)</solution>", msg, re.DOTALL | re.IGNORECASE
+        )
 
         # Fallback: treat markdown code block as execute when no solution found
         if not execute_match:
-            code_block_match = re.search(r"```(?:python|bash|r)?\s*(.*?)```", msg, re.DOTALL)
+            code_block_match = re.search(
+                r"```(?:python|bash|r)?\s*(.*?)```", msg, re.DOTALL
+            )
             if code_block_match and not answer_match:
                 execute_match = code_block_match
 
@@ -1468,7 +1625,8 @@ Each library is listed with its description to help you understand its functiona
         """LangGraph node: call the LLM and determine the next step."""
         system_prompt = self.system_prompt
         if hasattr(self.llm, "model_name") and (
-            "gpt" in str(self.llm.model_name).lower() or "openai" in str(type(self.llm)).lower()
+            "gpt" in str(self.llm.model_name).lower()
+            or "openai" in str(type(self.llm)).lower()
         ):
             system_prompt += "\n\nIMPORTANT FOR GPT MODELS: You MUST use XML tags <execute> or <solution> in EVERY response. Do not use markdown code blocks (```) - use <execute> tags instead."
 
@@ -1483,13 +1641,17 @@ Each library is listed with its description to help you understand its functiona
         else:
             print("parsing error...")
             error_count = sum(
-                1 for m in state["messages"] if isinstance(m, AIMessage) and "There are no tags" in m.content
+                1
+                for m in state["messages"]
+                if isinstance(m, AIMessage) and "There are no tags" in m.content
             )
             if error_count >= 2:
                 print("Detected repeated parsing errors, ending conversation")
                 state["next_step"] = "end"
                 state["messages"].append(
-                    AIMessage(content="Execution terminated due to repeated parsing errors. Please check your input and try again.")
+                    AIMessage(
+                        content="Execution terminated due to repeated parsing errors. Please check your input and try again."
+                    )
                 )
             else:
                 state["messages"].append(
@@ -1517,7 +1679,9 @@ Each library is listed with its description to help you understand its functiona
                 or code.strip().startswith("# R code")
                 or code.strip().startswith("# R script")
             ):
-                r_code = re.sub(r"^#!R|^# R code|^# R script", "", code, count=1).strip()
+                r_code = re.sub(
+                    r"^#!R|^# R code|^# R script", "", code, count=1
+                ).strip()
                 result = run_with_timeout(run_r_code, [r_code], timeout=timeout)
             elif (
                 code.strip().startswith("#!BASH")
@@ -1525,11 +1689,19 @@ Each library is listed with its description to help you understand its functiona
                 or code.strip().startswith("#!CLI")
             ):
                 if code.strip().startswith("#!CLI"):
-                    cli_command = re.sub(r"^#!CLI", "", code, count=1).strip().replace("\n", " ")
-                    result = run_with_timeout(run_bash_script, [cli_command], timeout=timeout)
+                    cli_command = (
+                        re.sub(r"^#!CLI", "", code, count=1).strip().replace("\n", " ")
+                    )
+                    result = run_with_timeout(
+                        run_bash_script, [cli_command], timeout=timeout
+                    )
                 else:
-                    bash_script = re.sub(r"^#!BASH|^# Bash script", "", code, count=1).strip()
-                    result = run_with_timeout(run_bash_script, [bash_script], timeout=timeout)
+                    bash_script = re.sub(
+                        r"^#!BASH|^# Bash script", "", code, count=1
+                    ).strip()
+                    result = run_with_timeout(
+                        run_bash_script, [bash_script], timeout=timeout
+                    )
             else:
                 self._clear_execution_plots()
                 self._inject_custom_functions_to_repl()
@@ -1552,13 +1724,17 @@ Each library is listed with its description to help you understand its functiona
             except Exception as e:
                 print(f"Warning: Could not capture plots from execution: {e}")
 
-            self._execution_results.append({
-                "triggering_message": last_message,
-                "images": execution_plots,
-                "timestamp": datetime.now().isoformat(),
-            })
+            self._execution_results.append(
+                {
+                    "triggering_message": last_message,
+                    "images": execution_plots,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
-            state["messages"].append(AIMessage(content=f"\n<observation>{result}</observation>".strip()))
+            state["messages"].append(
+                AIMessage(content=f"\n<observation>{result}</observation>".strip())
+            )
 
         return state
 
@@ -1573,7 +1749,9 @@ Each library is listed with its description to help you understand its functiona
                 Think hard what are missing to solve the task.
                 No question asked, just feedbacks.
                 """
-            feedback = self.llm.invoke(state["messages"] + [HumanMessage(content=feedback_prompt)])
+            feedback = self.llm.invoke(
+                state["messages"] + [HumanMessage(content=feedback_prompt)]
+            )
             state["messages"].append(
                 HumanMessage(
                     content=f"Wait... this is not enough to solve the task. Here are some feedbacks for improvement:\n{feedback.content}"
@@ -1628,7 +1806,11 @@ Each library is listed with its description to help you understand its functiona
             workflow.add_conditional_edges(
                 "generate",
                 self._route,
-                path_map={"execute": "execute", "generate": "generate", "end": "self_critic"},
+                path_map={
+                    "execute": "execute",
+                    "generate": "generate",
+                    "end": "self_critic",
+                },
             )
             workflow.add_conditional_edges(
                 "self_critic",
@@ -1701,7 +1883,9 @@ Each library is listed with its description to help you understand its functiona
         # Add custom data items to retrieval if they exist
         if hasattr(self, "_custom_data") and self._custom_data:
             for name, info in self._custom_data.items():
-                data_lake_descriptions.append({"name": name, "description": info["description"]})
+                data_lake_descriptions.append(
+                    {"name": name, "description": info["description"]}
+                )
 
         # 3. Libraries with descriptions - use library_content_dict directly
         library_descriptions = []
@@ -1713,7 +1897,9 @@ Each library is listed with its description to help you understand its functiona
             for name, info in self._custom_software.items():
                 # Check if it's not already in the library descriptions to avoid duplicates
                 if not any(lib["name"] == name for lib in library_descriptions):
-                    library_descriptions.append({"name": name, "description": info["description"]})
+                    library_descriptions.append(
+                        {"name": name, "description": info["description"]}
+                    )
 
         # 4. Know-how documents
         know_how_summaries = self.know_how_loader.get_document_summaries()
@@ -1727,7 +1913,9 @@ Each library is listed with its description to help you understand its functiona
         }
 
         # Use prompt-based retrieval with the agent's LLM
-        selected_resources = self.retriever.prompt_based_retrieval(prompt, resources, llm=self.llm)
+        selected_resources = self.retriever.prompt_based_retrieval(
+            prompt, resources, llm=self.llm
+        )
         print("\n" + "=" * 60)
         print("🔍 RESOURCE RETRIEVAL")
         print("=" * 60)
@@ -1737,7 +1925,10 @@ Each library is listed with its description to help you understand its functiona
         selected_resources_names = {
             "tools": selected_resources["tools"],
             "data_lake": [],
-            "libraries": [lib["name"] if isinstance(lib, dict) else lib for lib in selected_resources["libraries"]],
+            "libraries": [
+                lib["name"] if isinstance(lib, dict) else lib
+                for lib in selected_resources["libraries"]
+            ],
             "know_how": [],
         }
 
@@ -1766,7 +1957,9 @@ Each library is listed with its description to help you understand its functiona
                             "id": doc["id"],
                             "name": doc["name"],
                             "description": doc["description"],
-                            "content": doc["content_without_metadata"],  # Use stripped version for agent
+                            "content": doc[
+                                "content_without_metadata"
+                            ],  # Use stripped version for agent
                             "metadata": doc["metadata"],
                         }
                         selected_resources_names["know_how"].append(doc_for_agent)
@@ -1875,7 +2068,9 @@ Each library is listed with its description to help you understand its functiona
             ]
         )
 
-        checker_llm = self.format_check_prompt | self.llm.with_structured_output(output_class)
+        checker_llm = self.format_check_prompt | self.llm.with_structured_output(
+            output_class
+        )
         result = checker_llm.invoke({"messages": [("user", str(self.log))]}).dict()
         return result
 
@@ -1951,7 +2146,9 @@ Each library is listed with its description to help you understand its functiona
                             fn = getattr(self, "_custom_functions", {}).get(tool_name)
 
                         if fn is None:
-                            print(f"Warning: Could not find function '{tool_name}' in module '{module_name}'")
+                            print(
+                                f"Warning: Could not find function '{tool_name}' in module '{module_name}'"
+                            )
                             continue
 
                         # Extract parameters from your specific schema format
@@ -1978,7 +2175,9 @@ Each library is listed with its description to help you understand its functiona
         print(f"Created MCP server with {registered_tools} tools")
         return mcp
 
-    def save_conversation_history(self, filepath: str, include_images: bool = True, save_pdf: bool = True) -> None:
+    def save_conversation_history(
+        self, filepath: str, include_images: bool = True, save_pdf: bool = True
+    ) -> None:
         """Save the complete conversation history as PDF only.
 
         This function generates and saves the complete conversation history from the agent's
@@ -2030,37 +2229,35 @@ Each library is listed with its description to help you understand its functiona
         markdown_content = self._generate_markdown_content(include_images)
 
         # Create a temporary markdown file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as temp_file:
             temp_file.write(markdown_content)
             temp_markdown_path = temp_file.name
 
         try:
-            # Add timeout for PDF generation only in main thread
-            import signal
+            # Use threading-based timeout that works on all platforms and threads
+            pdf_result = {"success": False, "error": None}
 
-            can_use_alarm = threading.current_thread() is threading.main_thread() and hasattr(signal, "SIGALRM")
-
-            if can_use_alarm:
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("PDF generation timed out")
-
-                # Set timeout to 60 seconds
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(60)
-
+            def _do_convert():
                 try:
                     self._convert_markdown_to_pdf(temp_markdown_path, pdf_path)
-                finally:
-                    signal.alarm(0)  # Cancel the alarm
+                    pdf_result["success"] = True
+                except Exception as e:
+                    pdf_result["error"] = e
+
+            convert_thread = threading.Thread(target=_do_convert, daemon=True)
+            convert_thread.start()
+            convert_thread.join(timeout=60)
+
+            if convert_thread.is_alive():
+                print("Warning: PDF generation timed out after 60 seconds")
+            elif pdf_result["error"]:
+                print(f"Warning: Could not convert to PDF: {pdf_result['error']}")
             else:
-                print("Info: PDF export running without SIGALRM timeout (non-main thread).")
-                self._convert_markdown_to_pdf(temp_markdown_path, pdf_path)
+                print(f"Conversation history saved as PDF: {pdf_path}")
+                print(f"Total steps recorded: {len(getattr(self, 'log', []))}")
 
-            print(f"Conversation history saved as PDF: {pdf_path}")
-            print(f"Total steps recorded: {len(self.log)}")
-
-        except TimeoutError:
-            print("Warning: PDF generation timed out after 60 seconds")
         except Exception as e:
             print(f"Warning: Could not convert to PDF: {e}")
         finally:
@@ -2100,7 +2297,12 @@ Each library is listed with its description to help you understand its functiona
         # Process all messages using unified logic
         for message_data in messages:
             content, step_number, first_human_shown = self._process_message(
-                message_data, content, step_number, first_human_shown, added_plots, include_images
+                message_data,
+                content,
+                step_number,
+                first_human_shown,
+                added_plots,
+                include_images,
             )
 
         return content
@@ -2117,12 +2319,25 @@ Each library is listed with its description to help you understand its functiona
         """
         conversation_state = getattr(self, "_conversation_state", None)
 
-        if conversation_state and hasattr(conversation_state, "get") and "messages" in conversation_state:
-            print(f"DEBUG: Using conversation state with {len(conversation_state['messages'])} messages")
-            return self._normalize_conversation_state_messages(conversation_state["messages"])
-        else:
-            print(f"DEBUG: Using self.log with {len(self.log)} entries")
-            return self._normalize_log_messages(self.log)
+        if (
+            conversation_state
+            and isinstance(conversation_state, dict)
+            and "messages" in conversation_state
+        ):
+            print(
+                f"DEBUG: Using conversation state with {len(conversation_state['messages'])} messages"
+            )
+            return self._normalize_conversation_state_messages(
+                conversation_state["messages"]
+            )
+
+        log = getattr(self, "log", None) or []
+        if log:
+            print(f"DEBUG: Using self.log with {len(log)} entries")
+            return self._normalize_log_messages(log)
+
+        print("DEBUG: No conversation state or log available")
+        return []
 
     def _normalize_conversation_state_messages(self, messages):
         """Convert conversation state messages to unified format.
@@ -2152,7 +2367,9 @@ Each library is listed with its description to help you understand its functiona
             else:
                 msg_type = "other"
 
-            normalized.append({"content": content, "type": msg_type, "original": message})
+            normalized.append(
+                {"content": content, "type": msg_type, "original": message}
+            )
 
         return normalized
 
@@ -2181,11 +2398,21 @@ Each library is listed with its description to help you understand its functiona
             else:
                 msg_type = "other"
 
-            normalized.append({"content": content, "type": msg_type, "original": log_entry})
+            normalized.append(
+                {"content": content, "type": msg_type, "original": log_entry}
+            )
 
         return normalized
 
-    def _process_message(self, message_data, content, step_number, first_human_shown, added_plots, include_images):
+    def _process_message(
+        self,
+        message_data,
+        content,
+        step_number,
+        first_human_shown,
+        added_plots,
+        include_images,
+    ):
         """Process a single message and return updated state.
 
         This function is the main dispatcher for processing individual messages in the
@@ -2207,15 +2434,26 @@ Each library is listed with its description to help you understand its functiona
         msg_type = message_data["type"]
 
         if msg_type == "human":
-            return self._process_human_message(clean_output, content, step_number, first_human_shown)
+            return self._process_human_message(
+                clean_output, content, step_number, first_human_shown
+            )
         elif msg_type == "ai":
-            return self._process_ai_message(clean_output, content, step_number, added_plots, include_images)
+            return self._process_ai_message(
+                clean_output, content, step_number, added_plots, include_images
+            )
         else:
             return self._process_other_message(
-                clean_output, content, step_number, first_human_shown, added_plots, include_images
+                clean_output,
+                content,
+                step_number,
+                first_human_shown,
+                added_plots,
+                include_images,
             )
 
-    def _process_human_message(self, clean_output, content, step_number, first_human_shown):
+    def _process_human_message(
+        self, clean_output, content, step_number, first_human_shown
+    ):
         """Process human messages.
 
         This function handles human messages in the conversation history. It identifies
@@ -2245,7 +2483,9 @@ Each library is listed with its description to help you understand its functiona
 
         return content, step_number, first_human_shown  # step_number unchanged
 
-    def _process_ai_message(self, clean_output, content, step_number, added_plots, include_images):
+    def _process_ai_message(
+        self, clean_output, content, step_number, added_plots, include_images
+    ):
         """Process AI messages.
 
         This function handles AI messages in the conversation history. It can process
@@ -2270,11 +2510,15 @@ Each library is listed with its description to help you understand its functiona
         import re
 
         observation_pattern = r"<observation>(.*?)</observation>"
-        observation_matches = re.findall(observation_pattern, clean_output, re.DOTALL | re.IGNORECASE)
+        observation_matches = re.findall(
+            observation_pattern, clean_output, re.DOTALL | re.IGNORECASE
+        )
 
         if observation_matches:
             # Extract content before, between, and after observation tags
-            parts = re.split(observation_pattern, clean_output, flags=re.DOTALL | re.IGNORECASE)
+            parts = re.split(
+                observation_pattern, clean_output, flags=re.DOTALL | re.IGNORECASE
+            )
 
             # Process each part
             for i, part in enumerate(parts):
@@ -2287,17 +2531,29 @@ Each library is listed with its description to help you understand its functiona
                                 content += f"#### Step {step_number}\n\n"
 
                                 # Handle execution results if present
-                                execution_results = getattr(self, "_execution_results", None)
+                                execution_results = getattr(
+                                    self, "_execution_results", None
+                                )
                                 if has_execution_results(part, execution_results):
-                                    content, added_plots = self._process_execution_with_results(
-                                        part, content, added_plots, include_images, execution_results
+                                    content, added_plots = (
+                                        self._process_execution_with_results(
+                                            part,
+                                            content,
+                                            added_plots,
+                                            include_images,
+                                            execution_results,
+                                        )
                                     )
                                 else:
-                                    content = self._process_regular_ai_message(part, content)
+                                    content = self._process_regular_ai_message(
+                                        part, content
+                                    )
                 else:  # Odd indices are observation content
                     if part.strip():
                         # This is observation content - format as terminal
-                        formatted_observation = format_observation_as_terminal(f"<observation>{part}</observation>")
+                        formatted_observation = format_observation_as_terminal(
+                            f"<observation>{part}</observation>"
+                        )
                         if formatted_observation is not None:
                             content += f"{formatted_observation}\n\n"
 
@@ -2315,7 +2571,11 @@ Each library is listed with its description to help you understand its functiona
             execution_results = getattr(self, "_execution_results", None)
             if has_execution_results(clean_output, execution_results):
                 content, added_plots = self._process_execution_with_results(
-                    clean_output, content, added_plots, include_images, execution_results
+                    clean_output,
+                    content,
+                    added_plots,
+                    include_images,
+                    execution_results,
                 )
             else:
                 content = self._process_regular_ai_message(clean_output, content)
@@ -2323,7 +2583,13 @@ Each library is listed with its description to help you understand its functiona
         return content, step_number, True
 
     def _process_other_message(
-        self, clean_output, content, step_number, first_human_shown, added_plots, include_images
+        self,
+        clean_output,
+        content,
+        step_number,
+        first_human_shown,
+        added_plots,
+        include_images,
     ):
         """Process other message types.
 
@@ -2349,7 +2615,9 @@ Each library is listed with its description to help you understand its functiona
             content += f"{clean_output}\n\n"
         return content, step_number, first_human_shown
 
-    def _process_execution_with_results(self, clean_output, content, added_plots, include_images, execution_results):
+    def _process_execution_with_results(
+        self, clean_output, content, added_plots, include_images, execution_results
+    ):
         """Process AI message with execution results.
 
         This function handles AI messages that have associated execution results.
@@ -2370,7 +2638,9 @@ Each library is listed with its description to help you understand its functiona
 
         if matching_execution:
             content = self._format_and_add_content(clean_output, content)
-            content, added_plots = self._add_execution_plots(matching_execution, content, added_plots, include_images)
+            content, added_plots = self._add_execution_plots(
+                matching_execution, content, added_plots, include_images
+            )
         else:
             content = self._format_and_add_content(clean_output, content)
 
@@ -2397,10 +2667,14 @@ Each library is listed with its description to help you understand its functiona
         def parse_tool_calls_wrapper(code):
             return self._parse_tool_calls_with_modules(code)
 
-        formatted_content = format_execute_tags_in_content(formatted_content, parse_tool_calls_wrapper)
+        formatted_content = format_execute_tags_in_content(
+            formatted_content, parse_tool_calls_wrapper
+        )
         return content + f"{formatted_content}\n\n"
 
-    def _add_execution_plots(self, matching_execution, content, added_plots, include_images):
+    def _add_execution_plots(
+        self, matching_execution, content, added_plots, include_images
+    ):
         """Add plots from execution results.
 
         This function adds captured plots and images from execution results to the
@@ -2472,7 +2746,9 @@ Each library is listed with its description to help you understand its functiona
         except Exception as e:
             print(f"Warning: Could not clear execution plots: {e}")
 
-    def _generate_mcp_wrapper_from_base_CAi_schema(self, original_func, func_name, required_params, optional_params):
+    def _generate_mcp_wrapper_from_base_CAi_schema(
+        self, original_func, func_name, required_params, optional_params
+    ):
         """Generate wrapper function based on base_CAi schema format."""
         import inspect
 
@@ -2528,7 +2804,14 @@ Each library is listed with its description to help you understand its functiona
             new_params = []
 
             # Map your types to Python types
-            type_map = {"str": str, "int": int, "float": float, "bool": bool, "List[str]": list[str], "dict": dict}
+            type_map = {
+                "str": str,
+                "int": int,
+                "float": float,
+                "bool": bool,
+                "List[str]": list[str],
+                "dict": dict,
+            }
 
             # Add required parameters
             for param_info in required_params:
@@ -2536,7 +2819,13 @@ Each library is listed with its description to help you understand its functiona
                 param_type_str = param_info["type"]
                 param_type = type_map.get(param_type_str, str)
 
-                new_params.append(inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, annotation=param_type))
+                new_params.append(
+                    inspect.Parameter(
+                        param_name,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=param_type,
+                    )
+                )
 
             # Add optional parameters
             for param_info in optional_params:
@@ -2549,11 +2838,16 @@ Each library is listed with its description to help you understand its functiona
 
                 new_params.append(
                     inspect.Parameter(
-                        param_name, inspect.Parameter.KEYWORD_ONLY, default=None, annotation=optional_type
+                        param_name,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=optional_type,
                     )
                 )
 
             # Set the signature
-            wrapper.__signature__ = inspect.Signature(new_params, return_annotation=dict)
+            wrapper.__signature__ = inspect.Signature(
+                new_params, return_annotation=dict
+            )
 
             return wrapper

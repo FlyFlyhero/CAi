@@ -21,7 +21,7 @@ WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 # 端口配置
 # =============================================================================
 
-# additional_tools/server/app.py  —— 工具执行服务
+# toolkit/server/app.py  —— 工具执行服务
 TOOL_SERVER_HOST = os.getenv("TOOL_SERVER_HOST", "0.0.0.0")
 TOOL_SERVER_PORT = int(os.getenv("TOOL_SERVER_PORT", 8001))
 

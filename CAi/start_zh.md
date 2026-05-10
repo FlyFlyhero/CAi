@@ -32,7 +32,7 @@ Agent 收到结果，返回给大模型
 **关键设计：每个 Job 都有独立的沙盒目录**
 
 ```text
-additional_tools/server/workspace/jobs/
+toolkit/server/workspace/jobs/
 └── <uuid>/
     ├── params.json     ← 输入参数（由 JobManager 写入）
     ├── result.json     ← 计算结果（由 run.py 写入）
@@ -48,7 +48,7 @@ additional_tools/server/workspace/jobs/
 ## 文件结构：新建一个工具需要的三个文件
 
 ```text
-additional_tools/server/tools/
+toolkit/server/tools/
 └── <your_tool_name>/           ← 工具目录，名字即工具 ID
     ├── config.json             ← 必需：声明环境、GPU 需求、action 映射
     ├── run.py                  ← 主脚本（单 action 工具）
@@ -185,7 +185,7 @@ if __name__ == "__main__":
 
 ## 第三步：在 `template_tools.py` 中注册 Agent 工具函数
 
-后端脚本写好之后，需要在 `additional_tools/template_tools.py` 里增加一个 Python 函数，Agent 才能调用。
+后端脚本写好之后，需要在 `toolkit/functions/` 里增加一个 Python 函数，Agent 才能调用。
 
 ```python
 def calculate_scscore(smiles: str = None, smiles_list: list = None, model_type: str = "1024bool") -> str:

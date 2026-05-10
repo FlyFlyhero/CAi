@@ -54,7 +54,7 @@ pip install -e .
 Each tool runs in its own Conda environment:
 
 ```bash
-cd CAi/additional_tools/server
+cd CAi/toolkit/server
 
 # Install all tool environments
 bash install_all.sh
@@ -63,14 +63,14 @@ bash install_all.sh
 bash install_all.sh vina scscore toxicity
 ```
 
-Before starting, download tool source code from [Google Drive](https://drive.google.com/drive/folders/1tjYJrMcVJnMopzbTyrf9KskvAxg2Xfin?usp=sharing) and extract into `CAi/additional_tools/server/tools/`.
+Before starting, download tool source code from [Google Drive](https://drive.google.com/drive/folders/1tjYJrMcVJnMopzbTyrf9KskvAxg2Xfin?usp=sharing) and extract into `CAi/toolkit/server/tools/`.
 
 ### 4. Start the tool backend
 
 ```bash
-# Run from CAi/
-python additional_tools/server/app.py
-# Listens on http://0.0.0.0:8001
+# Run from the repo root:
+python -m CAi.toolkit.server.app
+# Listens on http://0.0.0.0:8001 — check http://localhost:8001/health
 ```
 
 ### 5. Launch the agent
@@ -123,15 +123,22 @@ CAi_copilot/
 │   ├── main.py                      # Entry point
 │   ├── CAi_agent/
 │   │   ├── base.py                  # BaseAgent — LangGraph + LLM + REPL
-│   │   ├── agent.py                 # A1pro — tools + skills + prompt
+│   │   ├── agent.py                 # A1pro — orchestrator
+│   │   ├── prompt/                  # PromptBuilder + sections
+│   │   ├── tools/                   # ToolRegistry + Scanner + ReplBridge
 │   │   └── skills/                  # SOP Markdown files
-│   ├── additional_tools/
-│   │   ├── template_tools.py        # Tool functions callable by agent
+│   ├── toolkit/                     # Agent-facing drug discovery tools
+│   │   ├── client.py                # HTTP client for the tool server
+│   │   ├── skill_helpers.py         # get_skill_content / list_available_skills
+│   │   ├── functions/
+│   │   │   ├── generation.py        # 6 molecule generators
+│   │   │   └── evaluation.py        # 4 molecule evaluators
 │   │   └── server/                  # Tool execution backend (FastAPI)
 │   └── web_ui/
 │       ├── backend/
 │       │   ├── app.py               # FastAPI chat + file endpoints
-│       │   └── conversation_store.py
+│       │   ├── conversation_store.py
+│       │   └── pdf_export.py        # Conversation → Markdown → PDF
 │       └── frontend/                # Static HTML/JS/CSS
 ├── base_CAi/                        # LLM factory + code execution utilities
 └── docs/
@@ -141,10 +148,10 @@ CAi_copilot/
 ## Tool Workflow
 
 ```
-Agent (template_tools.py)
+Agent (CAi/toolkit/functions/*.py)
     │  POST /run/{tool}/{action}
     ▼
-Tool backend (app.py) → JobManager
+Tool server (CAi/toolkit/server/app.py) → JobManager
     │  conda run -n <env> python run.py
     │  cwd = workspace/jobs/<uuid>/
     ▼
@@ -172,8 +179,8 @@ Agent receives result
 
 ### Add a tool
 
-1. Add a function to `CAi/additional_tools/template_tools.py`
-2. Export it from `CAi/additional_tools/__init__.py`
+1. Add a function to `CAi/toolkit/functions/generation.py` or `evaluation.py`
+2. Re-export it from `CAi/toolkit/__init__.py` (and `functions/__init__.py`)
 3. Restart or call `agent.reload_tools()`
 
 ```python

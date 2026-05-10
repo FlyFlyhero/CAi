@@ -26,7 +26,7 @@ INTERACTION MODES:
 EXECUTION RULES:
 - Python is default. Use `#!BASH` for shell commands.
 - Always print() results so they appear in observations.
-- Import tools before use: `from CAi.additional_tools import tool_name`
+- Import tools before use: `from CAi.toolkit import tool_name`
 - Validate SMILES with RDKit before passing to tools.
 - Keep code simple. Break complex tasks into multiple rounds.
 - If code fails, analyze the error before retrying.
@@ -57,7 +57,7 @@ class CoreSection(PromptSection):
 _TOOLS_HEADER = (
     "AVAILABLE TOOLS\n"
     + "=" * 50
-    + "\nImport before use: `from CAi.additional_tools import <name>`\n"
+    + "\nImport before use: `from CAi.toolkit import <name>`\n"
 )
 
 
@@ -92,7 +92,7 @@ SKILLS — Standard Operating Procedures
 Skills are pre-validated workflows for recurring tasks.
 When a user's request matches a skill, load it FIRST:
 
-  from CAi.additional_tools.get_skills_content import get_skill_content
+  from CAi.toolkit import get_skill_content
   workflow = get_skill_content('<skill_id>')
   print(workflow)
 

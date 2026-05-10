@@ -126,7 +126,7 @@ Tools become data — you can pass them around, compare them, put them in sets.
 ```python
 spec = ToolSpec.from_function(
     my_func,
-    source="module:CAi.additional_tools",
+    source="module:CAi.toolkit",
     hidden=False,          # show in prompt catalog?
     tags={"chemistry"},
 )
@@ -157,7 +157,7 @@ module's top-level functions. Future: `YamlConfigScanner`,
 
 ```python
 scanner = ModuleScanner(
-    "CAi.additional_tools",
+    "CAi.toolkit",
     exclude={"deprecated_fn"},
     hidden={"get_skill_content", "list_available_skills"},
 )
@@ -174,7 +174,7 @@ for spec in scanner.scan():
 Thin orchestrator (~150 lines). Its job is to:
 
 1. Create a `ToolRegistry` and attach a `ReplBridge`
-2. Run a `ModuleScanner` against `CAi.additional_tools` to populate the registry
+2. Run a `ModuleScanner` against `CAi.toolkit` to populate the registry
 3. Create a `SkillLoader` (optional)
 4. Initialize `BaseAgent` (LLM + LangGraph)
 5. Build a `PromptBuilder` with the three default sections
@@ -262,8 +262,8 @@ WEB_BACKEND_PORT=8000
 
 ## Adding tools
 
-1. Add a function to `CAi/additional_tools/template_tools.py`
-2. Export it from `CAi/additional_tools/__init__.py`
+1. Add a function to `CAi/toolkit/functions/generation.py` or `evaluation.py`
+2. Re-export it from `CAi/toolkit/__init__.py` (and from `functions/__init__.py`)
 3. Restart the agent (or call `agent.reload_tools()`)
 
 The function's docstring becomes its catalog description. Text after
@@ -360,8 +360,11 @@ tests/
 ├── test_tool_scanner.py        # ModuleScanner discovery             ( 8 tests)
 ├── test_repl_bridge.py         # Registry → builtins sync            ( 8 tests)
 ├── test_agent_execution.py     # Stateless history, tools, code      (10 tests)
-└── test_web_concurrency.py     # SSE parsing + chat lock             ( 6 tests)
-                                  Total: 97 tests, ~1.5s runtime
+├── test_web_concurrency.py     # SSE parsing + chat lock             ( 6 tests)
+├── test_pdf_export.py          # Conversation → Markdown → PDF       (17 tests)
+├── test_toolkit_client.py      # Tool server HTTP client             (14 tests)
+└── test_toolkit_validators.py  # SMILES input validators             ( 8 tests)
+                                  Total: 136 tests, ~1.6s runtime
 ```
 
 All tests use a `FakeLLM` stub that returns scripted responses — no

@@ -3,10 +3,10 @@
 #
 # 用法：
 #   # 在 CAi/ 目录下构建并启动
-#   docker compose -f additional_tools/server/docker-compose.yml up --build
+#   docker compose -f toolkit/server/docker-compose.yml up --build
 #
 #   # 后台运行
-#   docker compose -f additional_tools/server/docker-compose.yml up -d --build
+#   docker compose -f toolkit/server/docker-compose.yml up -d --build
 # =============================================================================
 
 version: "3.9"
@@ -15,7 +15,7 @@ services:
   tool-server:
     build:
       context: ../..          # CAi/ 目录作为 build context
-      dockerfile: additional_tools/server/Dockerfile
+      dockerfile: toolkit/server/Dockerfile
     image: tool-server:latest
     container_name: tool-server
 

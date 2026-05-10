@@ -22,8 +22,8 @@ test_tool/
 ### 第 1 步：复制本目录
 
 ```bash
-cp -r additional_tools/server/tools/test_tool \
-       additional_tools/server/tools/<your_tool_name>
+cp -r toolkit/server/tools/test_tool \
+       toolkit/server/tools/<your_tool_name>
 ```
 
 ### 第 2 步：修改 `config.json`
@@ -122,7 +122,7 @@ pip install fastapi uvicorn
 
 ```bash
 cd /path/to/Biomni_molecule/CAi
-python additional_tools/server/app.py
+python toolkit/server/app.py
 ```
 
 启动后服务监听在 `http://0.0.0.0:8001`，终端输出类似：
@@ -192,7 +192,7 @@ python send_request_template.py
 每个 Job 都在独立的沙盒目录中执行：
 
 ```
-additional_tools/server/workspace/jobs/<uuid>/
+toolkit/server/workspace/jobs/<uuid>/
 ├── params.json   ← JobManager 写入，脚本读取
 ├── result.json   ← 脚本写入，JobManager / Agent 读取
 ├── error.json    ← 异常时写入
@@ -209,7 +209,7 @@ additional_tools/server/workspace/jobs/<uuid>/
 □ 2. conda 环境已安装所有依赖
 □ 3. template_tools.py 中已添加 Agent 工具函数，docstring 清晰
 □ 4. pip install fastapi uvicorn（首次）
-□ 5. python additional_tools/server/app.py 启动后端服务
+□ 5. python toolkit/server/app.py 启动后端服务
 □ 6. curl http://<IP>:8001/tools 确认工具已被加载
 □ 7. 用 send_request_template.py 或 curl 手动测试一次，验证结果格式
 ```
