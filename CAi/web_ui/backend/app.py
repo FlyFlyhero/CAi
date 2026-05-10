@@ -330,6 +330,60 @@ async def delete_file(filename: str):
     return {"deleted": filename}
 
 
+# ========== PDF export ==========
+
+
+@app.post("/api/export-pdf")
+async def export_pdf(conversation_id: str | None = None):
+    """Export a conversation as PDF.
+
+    If conversation_id is omitted, falls back to the most recently
+    updated conversation (lets the frontend 'export current' button work
+    even if it hasn't wired up a conversation id yet).
+    """
+    from .pdf_export import (
+        EmptyConversation,
+        PdfEngineUnavailable,
+        export_conversation_to_pdf,
+    )
+
+    # Resolve which conversation to export
+    if conversation_id:
+        conv = _store.get_conversation(conversation_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    else:
+        recent = _store.list_conversations()
+        if not recent:
+            raise HTTPException(status_code=404, detail="No conversations to export")
+        conv = _store.get_conversation(recent[0]["id"])
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Name the file after the conversation title + timestamp
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_title = re.sub(r"[^\w\-]+", "_", conv.get("title") or "conversation").strip("_")
+    filename = f"{safe_title}_{ts}.pdf" if safe_title else f"conversation_{ts}.pdf"
+    out_path = os.path.join(_workspace_dir, filename)
+
+    try:
+        export_conversation_to_pdf(conv, out_path)
+    except EmptyConversation as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except PdfEngineUnavailable as e:
+        logger.error("PDF engine unavailable: %s", e)
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("PDF export failed")
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}") from e
+
+    return FileResponse(
+        out_path,
+        filename=filename,
+        media_type="application/pdf",
+    )
+
+
 # ========== Workspace ==========
 
 
