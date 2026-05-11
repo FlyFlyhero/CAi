@@ -1072,3 +1072,56 @@ body {
     .welcome-hints { grid-template-columns: 1fr; }
     .message-user .message-content { max-width: 92%; }
 }
+
+/* ========== New Conversation Button (larger, more visible) ========== */
+.btn-new-conv {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    background: var(--accent-color, #6366f1);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+}
+.btn-new-conv:hover {
+    background: var(--accent-hover, #4f46e5);
+    transform: scale(1.03);
+}
+.btn-new-conv i {
+    width: 14px;
+    height: 14px;
+}
+
+/* ========== Message Separator (visible divider between turns) ========== */
+.message + .message {
+    border-top: 1px solid var(--border-color, #e5e7eb);
+    margin-top: 12px;
+    padding-top: 16px;
+}
+
+/* ========== Collapsible: only header is clickable ========== */
+.collapsible-header {
+    cursor: pointer;
+    user-select: none;
+}
+.collapsible-body {
+    cursor: default;
+    user-select: text;
+}
+
+/* ========== PDF preview fallback ========== */
+.preview-pdf-fallback {
+    text-align: center;
+    padding: 8px;
+    font-size: 0.8rem;
+    color: var(--text-secondary, #6b7280);
+}
+.preview-pdf-fallback a {
+    color: var(--accent-color, #6366f1);
+    text-decoration: underline;
+}

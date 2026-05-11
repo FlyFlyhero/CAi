@@ -141,6 +141,24 @@ def _extract_parts(content: str) -> dict:
 # ========== Conversation Endpoints ==========
 
 
+async def _async_iter_agent(prompt: str, history: list[dict]):
+    """Wrap the synchronous agent generator into an async generator.
+
+    Each call to next(gen) is run in a thread so the event loop stays
+    responsive and can flush SSE chunks to the client between steps.
+    """
+    import asyncio
+
+    gen = _agent.run_with_history(prompt, history)
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            step = await loop.run_in_executor(None, next, gen)
+            yield step
+        except StopIteration:
+            break
+
+
 @app.get("/api/conversations")
 async def list_conversations():
     return {"conversations": _store.list_conversations()}
@@ -183,7 +201,13 @@ async def health():
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """Stream chat response using SSE."""
+    """Stream chat response using SSE.
+
+    The agent's run_with_history() is a synchronous generator (it blocks
+    on LLM calls and code execution). We run each step in a thread so
+    the async event loop can flush SSE chunks to the client in real time
+    instead of buffering everything until the generator is exhausted.
+    """
     if _agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
@@ -194,11 +218,9 @@ async def chat(request: ChatRequest):
         conv_id = meta["id"]
 
     async def event_stream():
-        # Acquire the chat lock for the entire stream — concurrent chats
-        # would otherwise interleave in the shared REPL namespace.
         async with _chat_lock:
             try:
-                # Send conversation ID
+                # Send conversation ID immediately
                 yield f"data: {json.dumps({'type': 'conversation_id', 'content': conv_id})}\n\n"
 
                 # Load history
@@ -212,12 +234,11 @@ async def chat(request: ChatRequest):
                 # Build prompt
                 agent_prompt = _build_prompt(request.message, request.file_refs)
 
-                # Stream from agent (stateless — history passed explicitly)
+                # Stream from agent. We pull steps from the sync generator
+                # inside a thread so each yield flushes to the client immediately.
                 final_content = ""
-                for step in _agent.run_with_history(agent_prompt, history):
+                async for step in _async_iter_agent(agent_prompt, history):
                     content = step["content"]
-
-                    # Parse and emit parts
                     parts = _extract_parts(content)
 
                     if "thinking" in parts:
@@ -308,8 +329,7 @@ async def download_file(filename: str, inline: int = 0):
     if not os.path.exists(fp):
         raise HTTPException(status_code=404, detail="File not found")
 
-    import mimetypes
-    media_type = mimetypes.guess_type(fp)[0] or "application/octet-stream"
+    media_type = _guess_media_type(filename)
 
     if inline:
         from starlette.responses import Response
@@ -319,6 +339,33 @@ async def download_file(filename: str, inline: int = 0):
                        headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
     return FileResponse(fp, filename=filename, media_type=media_type)
+
+
+# Fallback MIME types for common file extensions that mimetypes.guess_type
+# may not know on Windows (registry-dependent).
+_MIME_FALLBACKS = {
+    ".pdf": "application/pdf",
+    ".json": "application/json",
+    ".csv": "text/csv",
+    ".md": "text/markdown",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
+    ".smi": "chemical/x-daylight-smiles",
+    ".sdf": "chemical/x-mdl-sdfile",
+    ".mol": "chemical/x-mdl-molfile",
+    ".mol2": "chemical/x-mol2",
+    ".pdb": "chemical/x-pdb",
+    ".pdbqt": "chemical/x-pdbqt",
+}
+
+
+def _guess_media_type(filename: str) -> str:
+    import mimetypes
+    mt = mimetypes.guess_type(filename)[0]
+    if mt:
+        return mt
+    ext = os.path.splitext(filename)[1].lower()
+    return _MIME_FALLBACKS.get(ext, "application/octet-stream")
 
 
 @app.delete("/api/files/{filename}")

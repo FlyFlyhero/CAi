@@ -18,7 +18,7 @@ from CAi.config import (
     LLM_TEMPERATURE,
 )
 
-WEB_UI_PORT = 7001
+WEB_UI_PORT = 8888
 
 
 def _startup_summary() -> None:

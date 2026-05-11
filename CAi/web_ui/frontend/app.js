@@ -147,7 +147,27 @@ async function sendMessage() {
 
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+                // Process any remaining data in the buffer before exiting
+                if (buffer.trim()) {
+                    const remaining = buffer.split("\n");
+                    for (const line of remaining) {
+                        if (!line.startsWith("data: ")) continue;
+                        const jsonStr = line.slice(6);
+                        if (!jsonStr) continue;
+                        try {
+                            const event = JSON.parse(jsonStr);
+                            if (event.type === "solution") solutionContent = event.content;
+                            else if (event.type === "error") solutionContent = `❌ 错误: ${event.content}`;
+                            else if (event.type === "thinking") thinkingContent += (thinkingContent ? "\n" : "") + event.content;
+                            else if (event.type === "code") codeContent += (codeContent ? "\n---\n" : "") + event.content;
+                            else if (event.type === "observation") observationContent += (observationContent ? "\n---\n" : "") + event.content;
+                            else if (event.type === "conversation_id") state.currentConvId = event.content;
+                        } catch (e) { /* skip */ }
+                    }
+                }
+                break;
+            }
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
@@ -173,6 +193,10 @@ async function sendMessage() {
                         case "observation":
                             observationContent += (observationContent ? "\n---\n" : "") + event.content;
                             break;
+                        case "text":
+                            // Pure text response — treat as solution
+                            solutionContent += (solutionContent ? "\n" : "") + event.content;
+                            break;
                         case "solution":
                             solutionContent = event.content;
                             break;
@@ -187,10 +211,12 @@ async function sendMessage() {
             }
         }
 
-        const indicator = aiMsgEl.querySelector(".streaming-indicator");
-        if (indicator) indicator.remove();
+        // Final render — ensure streaming indicator is gone and solution is shown
+        state.isStreaming = false;
+        updateAIMessage(aiMsgEl, { thinking: thinkingContent, code: codeContent, observation: observationContent, solution: solutionContent || "(无响应)" });
 
     } catch (e) {
+        state.isStreaming = false;
         updateAIMessage(aiMsgEl, { solution: `❌ 请求失败: ${e.message}` });
     }
 
@@ -258,8 +284,8 @@ function buildCollapsible(title, content, type, defaultOpen = false, isRaw = fal
     const openClass = defaultOpen ? "open" : "";
     const renderedContent = isRaw ? content : `<div>${escapeHtml(content).replace(/\n/g, "<br>")}</div>`;
     return `
-        <div class="collapsible ${openClass}" onclick="this.classList.toggle('open')">
-            <div class="collapsible-header">
+        <div class="collapsible ${openClass}">
+            <div class="collapsible-header" onclick="event.stopPropagation(); this.parentElement.classList.toggle('open')">
                 <span class="arrow">▶</span>
                 <span>${title}</span>
             </div>
@@ -408,7 +434,12 @@ function previewFile(filename) {
     if (imageExts.includes(ext)) {
         contentHtml = `<img src="${fileUrl}" class="preview-image" alt="${escapeHtml(filename)}">`;
     } else if (ext === "pdf") {
-        contentHtml = `<iframe src="${fileUrl}" class="preview-pdf"></iframe>`;
+        contentHtml = `
+            <iframe src="${fileUrl}" class="preview-pdf" title="PDF Preview"></iframe>
+            <div class="preview-pdf-fallback">
+                <p>如果 PDF 未显示，请 <a href="/api/files/${encodeURIComponent(filename)}" target="_blank">点击下载</a></p>
+            </div>
+        `;
     } else if (ext === "md") {
         // Markdown: render as formatted HTML
         contentHtml = `<div class="preview-text-loading">加载中...</div>`;
@@ -431,7 +462,10 @@ function previewFile(filename) {
         contentHtml = `<div class="preview-text-loading">加载中...</div>`;
         showPreviewModal(filename, contentHtml);
         fetch(fileUrl)
-            .then(res => res.text())
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                return res.text();
+            })
             .then(text => {
                 const previewText = text.length > 50000
                     ? text.slice(0, 50000) + "\n\n... (文件过长，仅展示前 50000 字符)"
@@ -442,9 +476,9 @@ function previewFile(filename) {
                     container.querySelectorAll("pre code").forEach(b => hljs.highlightElement(b));
                 }
             })
-            .catch(() => {
+            .catch((err) => {
                 const container = $(".preview-body");
-                if (container) container.innerHTML = `<div class="preview-error">无法加载文件内容</div>`;
+                if (container) container.innerHTML = `<div class="preview-error">无法加载文件: ${escapeHtml(err.message)}</div>`;
             });
         return;
     } else {
