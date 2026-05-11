@@ -7,6 +7,12 @@ Concurrency model:
     ConversationStore. Each /api/chat request loads history → runs agent →
     appends results. A global lock serialises chat requests because code
     execution uses a shared REPL namespace (see BaseAgent._exec_lock).
+
+Streaming model:
+    The agent's run_with_history_streaming() yields token-level events
+    from the LLM plus observation events after each code execution.
+    We forward each event as an SSE message so the browser can render
+    incrementally instead of waiting for the whole turn to finish.
 """
 
 import asyncio
@@ -28,7 +34,7 @@ from .conversation_store import ConversationStore
 
 logger = get_logger("CAi.web_ui")
 
-app = FastAPI(title="CAi Web UI API", version="2.0.0")
+app = FastAPI(title="CAi Web UI API", version="2.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,6 +55,11 @@ _store = ConversationStore(_conversations_dir)
 
 # Serialise chat requests — the agent's REPL is process-global.
 _chat_lock = asyncio.Lock()
+
+# Per-conversation cancellation signals. When the user hits "stop" on a
+# running chat, we set the event; the streaming loop checks it between
+# chunks and exits cleanly.
+_cancel_events: dict[str, asyncio.Event] = {}
 
 
 def set_agent(agent):
@@ -80,34 +91,25 @@ class UpdateTitleRequest(BaseModel):
 def _build_prompt(text: str, ref_files: list[str]) -> str:
     """Build the prompt sent to the agent."""
     prompt = text
-    if ref_files:
-        prompt += f"\n\n[工作目录]: {_workspace_dir}"
-        for f in ref_files:
-            target = os.path.join(_workspace_dir, f)
-            prompt += f"\n[引用文件]: {target}"
-    else:
-        prompt += f"\n\n[工作目录]: {_workspace_dir}"
+    prompt += f"\n\n[工作目录]: {_workspace_dir}"
+    for f in ref_files:
+        target = os.path.join(_workspace_dir, f)
+        prompt += f"\n[引用文件]: {target}"
     return prompt
 
 
 def _extract_parts(content: str) -> dict:
-    """Extract structured parts from agent response.
+    """Split a complete AI message into thinking / code / observation / text.
 
-    Classifies content into buckets:
-      - thinking   : narrative text that comes before <execute>/<observation>
-      - code       : content of <execute>...</execute> blocks
-      - observation: content of <observation>...</observation> blocks
-      - text       : standalone text response (used when there's no code)
-
-    Note: <done/> is a pure terminator and does NOT shift text into "thinking".
-    A message like "Final answer. <done/>" has text = "Final answer."
+    Used when re-hydrating a conversation from storage and for the
+    non-streaming fallback in tests. The streaming path does its own
+    incremental parsing in the frontend.
     """
     parts = {}
 
     has_execute = "<execute>" in content
     has_observation = "<observation>" in content
 
-    # "Thinking" only makes sense when there's actual code/observation after it.
     if has_execute or has_observation:
         tag_positions = [
             content.find(tag)
@@ -119,17 +121,14 @@ def _extract_parts(content: str) -> dict:
             if thinking:
                 parts["thinking"] = thinking
 
-    # Code blocks
     code_blocks = re.findall(r"<execute>(.*?)</execute>", content, re.DOTALL)
     if code_blocks:
         parts["code"] = "\n\n".join(b.strip() for b in code_blocks)
 
-    # Observations
     obs_blocks = re.findall(r"<observation>(.*?)</observation>", content, re.DOTALL)
     if obs_blocks:
         parts["observation"] = "\n\n".join(b.strip() for b in obs_blocks)
 
-    # If there's no code/observation, treat the whole (de-tagged) message as text
     if "code" not in parts and "observation" not in parts:
         cleaned = re.sub(r"<done\s*/?>", "", content).strip()
         if cleaned:
@@ -138,25 +137,55 @@ def _extract_parts(content: str) -> dict:
     return parts
 
 
-# ========== Conversation Endpoints ==========
+async def _async_iter_agent(prompt: str, history: list[dict], cancel_event: asyncio.Event | None = None):
+    """Adapt the synchronous streaming generator into an async generator.
 
+    Each call to next(gen) blocks on LLM token fetch / code execution.
+    We run it in a thread so the event loop stays free to flush SSE.
 
-async def _async_iter_agent(prompt: str, history: list[dict]):
-    """Wrap the synchronous agent generator into an async generator.
+    StopIteration cannot cross an asyncio Future boundary — if we let
+    `next()` raise it inside run_in_executor, asyncio raises the cryptic
+    "TypeError: StopIteration interacts badly with generators" and the
+    stream hangs. So we catch StopIteration on the worker side and
+    return a sentinel instead.
 
-    Each call to next(gen) is run in a thread so the event loop stays
-    responsive and can flush SSE chunks to the client between steps.
+    If `cancel_event` is set between chunks, the iteration stops and the
+    generator is closed. Any still-running step finishes silently in the
+    background (Python threads can't be forcibly killed — but the next
+    yielded chunk is simply discarded).
     """
-    import asyncio
-
-    gen = _agent.run_with_history(prompt, history)
+    _DONE = object()
+    gen = _agent.run_with_history_streaming(prompt, history)
     loop = asyncio.get_event_loop()
-    while True:
+
+    def _next_or_sentinel():
         try:
-            step = await loop.run_in_executor(None, next, gen)
-            yield step
+            return next(gen)
         except StopIteration:
-            break
+            return _DONE
+
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            step = await loop.run_in_executor(None, _next_or_sentinel)
+            if step is _DONE:
+                break
+            yield step
+    finally:
+        gen.close()
+
+
+def _clean_stored_answer(full_content: str) -> str:
+    """Strip internal tags so the stored conversation reads as plain text."""
+    text = re.sub(r"<execute>.*?</execute>", "", full_content, flags=re.DOTALL)
+    text = re.sub(r"<observation>.*?</observation>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<done\s*/?>", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+# ========== Conversation Endpoints ==========
 
 
 @app.get("/api/conversations")
@@ -201,17 +230,20 @@ async def health():
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """Stream chat response using SSE.
+    """SSE stream of agent events.
 
-    The agent's run_with_history() is a synchronous generator (it blocks
-    on LLM calls and code execution). We run each step in a thread so
-    the async event loop can flush SSE chunks to the client in real time
-    instead of buffering everything until the generator is exhausted.
+    Event types sent to the frontend:
+        conversation_id  — conversation UUID (first event)
+        token            — one LLM token/chunk as it arrives
+        message_end      — full message complete (may contain <execute>)
+        observation      — code execution output, wrapped in <observation>
+        solution         — final cleaned answer (persisted to history)
+        done             — stream complete
+        error            — exception message
     """
     if _agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
-    # Ensure conversation
     conv_id = request.conversation_id
     if not conv_id:
         meta = _store.create_conversation()
@@ -220,7 +252,6 @@ async def chat(request: ChatRequest):
     async def event_stream():
         async with _chat_lock:
             try:
-                # Send conversation ID immediately
                 yield f"data: {json.dumps({'type': 'conversation_id', 'content': conv_id})}\n\n"
 
                 # Load history
@@ -231,40 +262,37 @@ async def chat(request: ChatRequest):
                         if m.get("role") in ("user", "assistant"):
                             history.append({"role": m["role"], "content": m["content"]})
 
-                # Build prompt
                 agent_prompt = _build_prompt(request.message, request.file_refs)
 
-                # Stream from agent. We pull steps from the sync generator
-                # inside a thread so each yield flushes to the client immediately.
-                final_content = ""
-                async for step in _async_iter_agent(agent_prompt, history):
-                    content = step["content"]
-                    parts = _extract_parts(content)
+                # Accumulate the full final response (the last "message_end"
+                # before the loop exits) — this goes into conversation storage.
+                last_full_message = ""
 
-                    if "thinking" in parts:
-                        yield f"data: {json.dumps({'type': 'thinking', 'content': parts['thinking']}, ensure_ascii=False)}\n\n"
-                    if "code" in parts:
-                        yield f"data: {json.dumps({'type': 'code', 'content': parts['code']}, ensure_ascii=False)}\n\n"
-                    if "observation" in parts:
-                        yield f"data: {json.dumps({'type': 'observation', 'content': parts['observation']}, ensure_ascii=False)}\n\n"
-                    if "text" in parts:
-                        yield f"data: {json.dumps({'type': 'text', 'content': parts['text']}, ensure_ascii=False)}\n\n"
+                # Register cancel event for this conversation
+                cancel_ev = asyncio.Event()
+                _cancel_events[conv_id] = cancel_ev
 
-                    final_content = content
+                async for step in _async_iter_agent(agent_prompt, history, cancel_ev):
+                    ev_type = step.get("type")
+                    ev_content = step.get("content", "")
 
-                # Build the stored answer by cleaning internal tags
-                stored_answer = re.sub(r"<execute>.*?</execute>", "", final_content, flags=re.DOTALL)
-                stored_answer = re.sub(r"<observation>.*?</observation>", "", stored_answer, flags=re.DOTALL)
-                stored_answer = re.sub(r"<done\s*/?>", "", stored_answer)
-                stored_answer = re.sub(r"\n{3,}", "\n\n", stored_answer).strip()
+                    if ev_type == "token":
+                        # Forward raw token; the frontend assembles and parses.
+                        yield f"data: {json.dumps({'type': 'token', 'content': ev_content}, ensure_ascii=False)}\n\n"
+                    elif ev_type == "message_end":
+                        last_full_message = ev_content
+                        yield f"data: {json.dumps({'type': 'message_end', 'content': ev_content}, ensure_ascii=False)}\n\n"
+                    elif ev_type == "observation":
+                        yield f"data: {json.dumps({'type': 'observation', 'content': ev_content}, ensure_ascii=False)}\n\n"
 
-                if not stored_answer:
-                    stored_answer = final_content  # Fallback
+                # Clean up cancel event
+                _cancel_events.pop(conv_id, None)
 
-                # Send final solution
+                # Final cleaned answer for storage + a "solution" event.
+                stored_answer = _clean_stored_answer(last_full_message) or last_full_message
                 yield f"data: {json.dumps({'type': 'solution', 'content': stored_answer}, ensure_ascii=False)}\n\n"
 
-                # Persist
+                # Persist conversation
                 display_message = request.message
                 if request.file_refs:
                     display_message += f"\n\n📎 引用: {', '.join(request.file_refs)}"
@@ -335,9 +363,11 @@ async def download_file(filename: str, inline: int = 0):
         from starlette.responses import Response
         with open(fp, "rb") as f:
             content = f.read()
-        return Response(content=content, media_type=media_type,
-                       headers={"Content-Disposition": f'inline; filename="{filename}"'})
-
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
     return FileResponse(fp, filename=filename, media_type=media_type)
 
 
@@ -350,6 +380,11 @@ _MIME_FALLBACKS = {
     ".md": "text/markdown",
     ".yaml": "text/yaml",
     ".yml": "text/yaml",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".smi": "chemical/x-daylight-smiles",
     ".sdf": "chemical/x-mdl-sdfile",
     ".mol": "chemical/x-mdl-molfile",
@@ -361,6 +396,7 @@ _MIME_FALLBACKS = {
 
 def _guess_media_type(filename: str) -> str:
     import mimetypes
+
     mt = mimetypes.guess_type(filename)[0]
     if mt:
         return mt
@@ -382,19 +418,12 @@ async def delete_file(filename: str):
 
 @app.post("/api/export-pdf")
 async def export_pdf(conversation_id: str | None = None):
-    """Export a conversation as PDF.
-
-    If conversation_id is omitted, falls back to the most recently
-    updated conversation (lets the frontend 'export current' button work
-    even if it hasn't wired up a conversation id yet).
-    """
     from .pdf_export import (
         EmptyConversation,
         PdfEngineUnavailable,
         export_conversation_to_pdf,
     )
 
-    # Resolve which conversation to export
     if conversation_id:
         conv = _store.get_conversation(conversation_id)
         if not conv:
@@ -407,7 +436,6 @@ async def export_pdf(conversation_id: str | None = None):
         if not conv:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # Name the file after the conversation title + timestamp
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_title = re.sub(r"[^\w\-]+", "_", conv.get("title") or "conversation").strip("_")
     filename = f"{safe_title}_{ts}.pdf" if safe_title else f"conversation_{ts}.pdf"
@@ -424,11 +452,7 @@ async def export_pdf(conversation_id: str | None = None):
         logger.exception("PDF export failed")
         raise HTTPException(status_code=500, detail=f"Export failed: {e}") from e
 
-    return FileResponse(
-        out_path,
-        filename=filename,
-        media_type="application/pdf",
-    )
+    return FileResponse(out_path, filename=filename, media_type="application/pdf")
 
 
 # ========== Workspace ==========
@@ -452,3 +476,18 @@ async def clear_workspace():
 @app.post("/api/reset")
 async def reset_all():
     return {"status": "reset"}
+
+@app.post("/api/chat/cancel")
+async def cancel_chat(conversation_id: str | None = None):
+    """Signal a running chat stream to stop.
+
+    The streaming loop checks the cancel event between chunks and exits
+    cleanly. The already-generated content up to that point is still
+    persisted to the conversation.
+    """
+    cid = conversation_id or "current"
+    ev = _cancel_events.get(cid)
+    if ev:
+        ev.set()
+        return {"status": "cancelled", "conversation_id": cid}
+    return {"status": "no_active_stream", "conversation_id": cid}

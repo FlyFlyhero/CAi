@@ -6,6 +6,16 @@ happens inside A1pro based on LLM_MODEL; override it by setting
 LLM_SOURCE in the .env file.
 """
 
+# Silence a benign langgraph 0.6 deprecation notice about `allowed_objects`.
+# Must run before importing langgraph (indirectly via CAi.CAi_agent).
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*allowed_objects.*",
+    category=Warning,
+)
+
 import socket
 import sys
 
@@ -67,7 +77,7 @@ def main() -> None:
     try:
         agent = A1pro(
             llm=LLM_MODEL,
-            source=LLM_SOURCE,        # None → auto-detect from model name
+            source=LLM_SOURCE,  # None → auto-detect from model name
             base_url=LLM_BASE_URL,
             api_key=LLM_API_KEY,
             temperature=LLM_TEMPERATURE,

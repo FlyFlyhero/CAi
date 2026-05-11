@@ -1,23 +1,35 @@
-"""Unit tests for BaseAgent._parse_response.
+"""Unit tests for BaseAgent response parsing.
 
-These tests don't need a real LLM or even a constructed agent — we call the
-method on an unbound descriptor or on a bare instance.
+The old monolithic _parse_response() was split into _normalize_content()
++ _has_execute_block() during the streaming refactor. These tests verify
+the combined behaviour via a small adapter.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
-
-# We bypass BaseAgent.__init__ (which builds a LangGraph) by constructing an
-# object via __new__ and invoking the bound method manually.
 def _parser():
+    """Return a callable that replicates the old _parse_response(response)
+    API: takes something with `.content`, returns (normalized_text, next_step).
+
+    We combine the two new methods on a BaseAgent instance created via
+    __new__ so we don't need credentials to run these unit tests.
+    """
     from CAi.CAi_agent.base import BaseAgent
 
     obj = BaseAgent.__new__(BaseAgent)
-    return obj._parse_response
+
+    def _parse(response):
+        content = BaseAgent._normalize_content(response.content)
+        # Repair an unclosed <execute> tag (the stop sequence eats </execute>).
+        if "<execute>" in content and "</execute>" not in content:
+            content += "</execute>"
+        next_step = "execute" if BaseAgent._has_execute_block(content) else "end"
+        return content.strip(), next_step
+
+    return _parse
 
 
 def _fake_resp(content):

@@ -64,7 +64,7 @@ def predict_molecule_toxicity(smiles: str) -> str:
         and optionally image_saved_at / vision_prompt.
     """
     result = run_tool("toxicity", {"smiles": smiles})
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})
@@ -107,7 +107,7 @@ def predict_antibacterial_pmic(smiles: str) -> str:
         JSON string with pMIC_value, estimated_MIC_uM and a short interpretation.
     """
     result = run_tool("pmic", {"smiles": smiles})
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})
@@ -158,7 +158,7 @@ def perform_molecular_docking_vina(
         "n_poses": 20,
     }
     result = run_tool("vina", payload, timeout_mins=20)
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})

@@ -52,6 +52,8 @@ def run_bash_script(script: str) -> str:
                 [bash, temp_file],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 env=os.environ.copy(),
                 cwd=os.getcwd(),

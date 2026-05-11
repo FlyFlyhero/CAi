@@ -3,30 +3,26 @@ BaseAgent — 精简的 Agent 基类
 
 职责：
 - LLM 初始化
-- LangGraph workflow 构建（generate → execute → generate 循环）
+- 执行循环（generate → execute → generate）
 - 代码执行（Python / Bash）
 - 消息解析（支持混合模式：纯文本 + 代码执行）
-
-不包含：
-- 工具注册 / 检索
-- 数据湖 / 软件库
-- Know-how / Skills
-- UI 相关逻辑
+- 流式输出（token 级）与非流式输出两种 API
 
 Concurrency note:
-    BaseAgent 本身是 stateless 的。每次 run*() 调用都构造新的输入，LangGraph
-    不使用 checkpointer —— 对话历史由调用方（例如 ConversationStore）显式管理。
-    这样多个并发请求不会通过 thread_id 互相串扰。
+    BaseAgent 本身是 stateless 的。每次 run*() 调用都构造新的输入；
+    对话历史由调用方（例如 ConversationStore）显式管理。
+    这样多个并发请求不会互相串扰。
 """
+
+from __future__ import annotations
 
 import builtins
 import re
 from collections.abc import Generator
 from threading import Lock
-from typing import Literal, TypedDict
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langgraph.graph import END, START, StateGraph
 
 from .execution import (
     inject_custom_functions,
@@ -36,10 +32,8 @@ from .execution import (
 )
 from .llm import SourceType, get_llm
 
-
-class AgentState(TypedDict):
-    messages: list[BaseMessage]
-    next_step: str | None
+# Maximum number of generate→execute cycles before we give up (safety net).
+_MAX_ITERATIONS = 50
 
 
 class BaseAgent:
@@ -65,9 +59,9 @@ class BaseAgent:
         self.timeout_seconds = timeout_seconds
         self._system_prompt = system_prompt or self._default_system_prompt()
 
-        # Init LLM. We pass api_key through as-is (None → let the factory
-        # read the provider-specific env var; "EMPTY" works for local
-        # OpenAI-compatible servers that don't require auth).
+        # Init LLM. api_key=None lets the factory read the provider-specific
+        # env var ("EMPTY" is used automatically for Custom endpoints that
+        # don't require auth).
         self.llm = get_llm(
             llm,
             temperature=temperature,
@@ -77,12 +71,8 @@ class BaseAgent:
             api_key=api_key,
         )
 
-        # Execution lock — code execution touches builtins (REPL namespace),
-        # so we serialise calls to avoid cross-request interference.
+        # Serialise code execution — the REPL shares builtins across calls.
         self._exec_lock = Lock()
-
-        # Build workflow
-        self._build_workflow()
 
     # ------------------------------------------------------------------
     # Properties
@@ -121,14 +111,9 @@ RULES:
     # Message parsing
     # ------------------------------------------------------------------
 
-    def _parse_response(self, response) -> tuple[str, str]:
-        """Parse LLM response → (content, next_step).
-
-        next_step: "execute" | "end"
-        - "execute": response contains <execute> block → run code
-        - "end":     response is pure text or contains <done/> → stop
-        """
-        content = response.content
+    @staticmethod
+    def _normalize_content(content: Any) -> str:
+        """Coerce LangChain content (str or list of blocks) into a plain string."""
         if isinstance(content, list):
             parts = []
             for block in content:
@@ -138,44 +123,26 @@ RULES:
                         parts.append(text)
                 elif isinstance(block, str):
                     parts.append(block)
-            content = "".join(parts)
-        else:
-            content = str(content)
+            return "".join(parts)
+        return str(content) if content is not None else ""
 
-        # Fix unclosed tag (can happen with the </execute> stop sequence)
-        if "<execute>" in content and "</execute>" not in content:
-            content += "</execute>"
-
-        has_execute = bool(re.search(r"<execute>.*?</execute>", content, re.DOTALL))
-        next_step = "execute" if has_execute else "end"
-
-        return content.strip(), next_step
+    @staticmethod
+    def _has_execute_block(content: str) -> bool:
+        return bool(re.search(r"<execute>.*?</execute>", content, re.DOTALL))
 
     # ------------------------------------------------------------------
-    # LangGraph nodes
+    # Code execution
     # ------------------------------------------------------------------
 
-    def _node_generate(self, state: AgentState) -> AgentState:
-        """Call LLM."""
-        messages = [SystemMessage(content=self.system_prompt)] + state["messages"]
-        response = self.llm.invoke(messages)
-        content, next_step = self._parse_response(response)
+    def _run_code_blocks(self, content: str) -> str | None:
+        """Extract <execute>...</execute> blocks from `content`, run them,
+        and return the combined output wrapped in <observation> tags.
 
-        state["messages"].append(AIMessage(content=content))
-        state["next_step"] = next_step
-        return state
-
-    def _node_execute(self, state: AgentState) -> AgentState:
-        """Extract and run code from the last AI message.
-
-        Code execution is serialised via self._exec_lock because the REPL
-        uses a shared builtins namespace for injected functions.
+        Returns None if there were no code blocks.
         """
-        last_content = state["messages"][-1].content
-
-        blocks = re.findall(r"<execute>(.*?)</execute>", last_content, re.DOTALL)
+        blocks = re.findall(r"<execute>(.*?)</execute>", content, re.DOTALL)
         if not blocks:
-            return state
+            return None
 
         results = []
         with self._exec_lock:
@@ -192,100 +159,21 @@ RULES:
         combined = "\n".join(results)
         if len(combined) > 15000:
             combined = combined[:15000] + "\n\n[Output truncated — showing first 15K chars]"
-
-        state["messages"].append(AIMessage(content=f"<observation>\n{combined}\n</observation>"))
-        state["next_step"] = "generate"
-        return state
-
-    # ------------------------------------------------------------------
-    # Routing
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _route(state: AgentState) -> Literal["execute", "end"]:
-        ns = state.get("next_step", "end")
-        return "execute" if ns == "execute" else "end"
-
-    # ------------------------------------------------------------------
-    # Workflow construction
-    # ------------------------------------------------------------------
-
-    def _build_workflow(self):
-        """Build the LangGraph state machine.
-
-        We intentionally do NOT attach a checkpointer: conversation history
-        is managed by the caller (ConversationStore), and passed into each
-        run via `run_with_history`. This keeps the agent stateless and
-        safe to use across concurrent requests.
-        """
-        workflow = StateGraph(AgentState)
-        workflow.add_node("generate", self._node_generate)
-        workflow.add_node("execute", self._node_execute)
-
-        workflow.add_edge(START, "generate")
-        workflow.add_edge("execute", "generate")
-        workflow.add_conditional_edges(
-            "generate",
-            self._route,
-            {"execute": "execute", "end": END},
-        )
-
-        self.app = workflow.compile()
-
-    # ------------------------------------------------------------------
-    # REPL injection
-    # ------------------------------------------------------------------
+        return f"<observation>\n{combined}\n</observation>"
 
     def _inject_functions_to_repl(self):
-        """Inject registered functions into the REPL namespace."""
+        """Make registered tools callable from inside the REPL."""
         custom_fns = getattr(builtins, "_base_CAi_custom_functions", None)
         if custom_fns:
             inject_custom_functions(custom_fns)
 
     # ------------------------------------------------------------------
-    # Public API
+    # Core loop
     # ------------------------------------------------------------------
 
-    def run(self, prompt: str) -> tuple[list[str], str]:
-        """Run the agent on a single prompt (no prior history).
-
-        Returns:
-            (log, final_content) — log is a list of short message summaries,
-            final_content is the last message's full content.
-        """
-        inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
-        config = {"recursion_limit": 200}
-
-        log: list[str] = []
-        final_content = ""
-        for state in self.app.stream(inputs, stream_mode="values", config=config):
-            msg = state["messages"][-1]
-            final_content = msg.content
-            log.append(f"[{msg.__class__.__name__}] {msg.content[:200]}")
-
-        return log, final_content
-
-    def run_stream(self, prompt: str) -> Generator[dict, None, None]:
-        """Stream execution steps as dicts (no prior history)."""
-        yield from self.run_with_history(prompt, history=[])
-
-    def run_with_history(
-        self, prompt: str, history: list[dict]
-    ) -> Generator[dict, None, None]:
-        """Run with pre-existing conversation history.
-
-        Args:
-            prompt: The new user message.
-            history: List of prior messages, each
-                     {"role": "user"|"assistant", "content": "..."}.
-                     History is provided by the caller (stateless execution);
-                     the agent does not persist anything itself.
-
-        Yields:
-            {"type": <message class name>, "content": <str>} for each new
-            message produced by the workflow.
-        """
-        messages: list[BaseMessage] = []
+    def _build_messages(self, prompt: str, history: list[dict]) -> list[BaseMessage]:
+        """Convert caller-supplied history + new prompt into LangChain messages."""
+        messages: list[BaseMessage] = [SystemMessage(content=self._system_prompt)]
         for m in history:
             role = m.get("role")
             content = m.get("content", "")
@@ -295,16 +183,139 @@ RULES:
                 messages.append(HumanMessage(content=content))
             elif role == "assistant":
                 messages.append(AIMessage(content=content))
-
         messages.append(HumanMessage(content=prompt))
-        inputs = {"messages": messages, "next_step": None}
-        config = {"recursion_limit": 200}
+        return messages
 
-        # Track which messages are new (produced by this run), so we only
-        # stream those — not the replayed history.
-        seen = len(messages)
-        for state in self.app.stream(inputs, stream_mode="values", config=config):
-            new_msgs = state["messages"][seen:]
-            seen = len(state["messages"])
-            for msg in new_msgs:
-                yield {"type": msg.__class__.__name__, "content": msg.content}
+    def _invoke_llm_full(self, messages: list[BaseMessage]) -> str:
+        """Blocking LLM call — returns full response as a string."""
+        response = self.llm.invoke(messages)
+        content = self._normalize_content(response.content)
+        # Repair unclosed <execute> (can happen with the </execute> stop sequence).
+        if "<execute>" in content and "</execute>" not in content:
+            content += "</execute>"
+        return content.strip()
+
+    def _stream_llm(
+        self, messages: list[BaseMessage]
+    ) -> Generator[tuple[str, str], None, None]:
+        """Stream LLM tokens.
+
+        Yields (kind, text) tuples:
+            ("token", chunk)  — each token/partial chunk as it arrives
+            ("final", full)   — complete, tag-repaired content once done
+        """
+        pieces: list[str] = []
+        try:
+            for chunk in self.llm.stream(messages):
+                delta = self._normalize_content(getattr(chunk, "content", ""))
+                if delta:
+                    pieces.append(delta)
+                    yield "token", delta
+        except Exception as e:  # noqa: BLE001
+            # Fall back to blocking invoke if streaming isn't supported
+            # by this LLM backend — at least the user gets a response.
+            err_msg = f"[Stream error: {e}. Falling back to blocking call.]"
+            yield "token", err_msg
+            full = self._invoke_llm_full(messages)
+            yield "final", full
+            return
+
+        full = "".join(pieces).strip()
+        if "<execute>" in full and "</execute>" not in full:
+            full += "</execute>"
+        yield "final", full
+
+    # ------------------------------------------------------------------
+    # Public API — non-streaming
+    # ------------------------------------------------------------------
+
+    def run(self, prompt: str) -> tuple[list[str], str]:
+        """Run the agent on a single prompt (no prior history, non-streaming).
+
+        Returns:
+            (log, final_content) — log is a list of short message summaries,
+            final_content is the last AI message.
+        """
+        log, final = [], ""
+        for step in self.run_with_history(prompt, history=[]):
+            log.append(f"[{step['type']}] {step['content'][:200]}")
+            final = step["content"]
+        return log, final
+
+    def run_with_history(
+        self, prompt: str, history: list[dict]
+    ) -> Generator[dict, None, None]:
+        """Non-streaming: run the agent to completion, yielding one dict
+        per complete AIMessage (including observations).
+
+        Kept for backward compatibility and tests. For real-time UI use
+        `run_with_history_streaming`.
+
+        Yields:
+            {"type": "AIMessage", "content": <str>}
+        """
+        messages = self._build_messages(prompt, history)
+
+        for _ in range(_MAX_ITERATIONS):
+            content = self._invoke_llm_full(messages)
+            messages.append(AIMessage(content=content))
+            yield {"type": "AIMessage", "content": content}
+
+            if not self._has_execute_block(content):
+                return  # No code — conversation is done.
+
+            observation = self._run_code_blocks(content)
+            if observation is None:
+                return
+            messages.append(AIMessage(content=observation))
+            yield {"type": "AIMessage", "content": observation}
+
+    # ------------------------------------------------------------------
+    # Public API — streaming
+    # ------------------------------------------------------------------
+
+    def run_with_history_streaming(
+        self, prompt: str, history: list[dict]
+    ) -> Generator[dict, None, None]:
+        """Streaming: drive the agent loop and yield fine-grained events.
+
+        Events:
+            {"type": "token",       "content": <str>}   one LLM token/chunk
+            {"type": "message_end", "content": <str>}   full AI message done
+            {"type": "observation", "content": <str>}   code execution output
+
+        The loop runs until the LLM produces a message with no <execute>
+        block (i.e. a final answer / plain text / <done/>).
+        """
+        messages = self._build_messages(prompt, history)
+
+        for _ in range(_MAX_ITERATIONS):
+            # 1. Stream LLM tokens for the current turn.
+            full_text = ""
+            for kind, text in self._stream_llm(messages):
+                if kind == "token":
+                    yield {"type": "token", "content": text}
+                elif kind == "final":
+                    full_text = text
+
+            messages.append(AIMessage(content=full_text))
+            yield {"type": "message_end", "content": full_text}
+
+            # 2. If there's no <execute> block, we're done.
+            if not self._has_execute_block(full_text):
+                return
+
+            # 3. Run the code block(s) and yield the observation.
+            observation = self._run_code_blocks(full_text)
+            if observation is None:
+                return
+            messages.append(AIMessage(content=observation))
+            yield {"type": "observation", "content": observation}
+
+    # ------------------------------------------------------------------
+    # Legacy helper — some callers still use run_stream without history.
+    # ------------------------------------------------------------------
+
+    def run_stream(self, prompt: str) -> Generator[dict, None, None]:
+        """Non-streaming (one event per complete message); no prior history."""
+        yield from self.run_with_history(prompt, history=[])

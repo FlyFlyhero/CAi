@@ -39,7 +39,7 @@ def generate_scaffold_analogs(smiles: str, num_analogs: int = 10) -> str:
         return json.dumps({"error": err})
 
     result = run_tool("scaffold", {"smiles": smiles, "num_analogs": num_analogs})
-    if "error" in result:
+    if result.get("error"):
         return json.dumps(result)
 
     summary = result.get("summary", {})
@@ -77,7 +77,7 @@ def generate_libinvent_decorations(smiles: str, num_decorations: int = 3) -> str
 
     payload = {"smiles": smiles, "number_of_decorations_per_scaffold": num_decorations}
     result = run_tool("libinvent", payload)
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})
@@ -138,7 +138,7 @@ def generate_molecules_for_pocket(
         payload["ref_ligand_path"] = ref_ligand_path
 
     result = run_tool("rxnflow", payload, timeout_mins=15)
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})
@@ -169,7 +169,7 @@ def generate_molecules_reinvent4_denovo(num_variants: int = 100) -> str:
         JSON string with status, generated_count, and molecules_smiles.
     """
     result = run_tool("reinvent4", {"num_variants": num_variants}, action="de_novo", timeout_mins=10)
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})
@@ -207,7 +207,7 @@ def generate_molecules_reinvent4_libinvent(smiles: str, num_variants: int = 50) 
         action="libinvent",
         timeout_mins=10,
     )
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})
@@ -254,7 +254,7 @@ def generate_molecules_reinvent4_mol2mol(
         "temperature": temperature,
     }
     result = run_tool("reinvent4", payload, action="mol2mol", timeout_mins=10)
-    if "error" in result:
+    if result.get("error"):
         return json.dumps({"error": result["error"]})
 
     summary = result.get("summary", {})

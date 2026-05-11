@@ -17,6 +17,26 @@ const state = {
 // ========== DOM Elements ==========
 const $ = (sel) => document.querySelector(sel);
 
+// ========== Safe wrappers for optional CDN libs ==========
+// highlight.js and lucide are loaded from CDN. In restricted networks
+// they may fail to load — guard every call so the UI still works.
+
+function safeHighlight(block) {
+    try {
+        if (typeof hljs !== "undefined" && hljs?.highlightElement) {
+            hljs.highlightElement(block);
+        }
+    } catch (_) { /* ignore */ }
+}
+
+function safeCreateIcons() {
+    try {
+        if (typeof lucide !== "undefined" && lucide?.createIcons) {
+            lucide.createIcons();
+        }
+    } catch (_) { /* ignore */ }
+}
+
 const messagesContainer = $("#messagesContainer");
 const messagesEl = $("#messages");
 const welcomeScreen = $("#welcomeScreen");
@@ -30,7 +50,7 @@ const conversationListEl = $("#conversationList");
 
 // ========== Initialization ==========
 document.addEventListener("DOMContentLoaded", async () => {
-    lucide.createIcons();
+    safeCreateIcons();
     setupEventListeners();
     loadFiles();
     await loadConversations();
@@ -68,14 +88,44 @@ function setupEventListeners() {
         }
     });
     document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeAllModals();
+        if (e.key === "Escape") {
+            if (state.isStreaming) {
+                cancelGeneration();
+            } else {
+                closeAllModals();
+            }
+        }
     });
 }
 
 function updateSendBtnState() {
-    sendBtn.disabled = !messageInput.value.trim()
-        && state.attachedFiles.length === 0
-        && state.referencedFiles.length === 0;
+    if (state.isStreaming) {
+        // Show as a "stop" button during generation
+        sendBtn.disabled = false;
+        sendBtn.classList.add("btn-stop");
+        sendBtn.title = "停止生成 (Esc)";
+        sendBtn.onclick = cancelGeneration;
+    } else {
+        sendBtn.classList.remove("btn-stop");
+        sendBtn.title = "发送 (Enter)";
+        sendBtn.onclick = null; // revert to the default click handler
+        sendBtn.disabled = !messageInput.value.trim()
+            && state.attachedFiles.length === 0
+            && state.referencedFiles.length === 0;
+    }
+}
+
+async function cancelGeneration() {
+    if (!state.isStreaming) return;
+    try {
+        const url = state.currentConvId
+            ? `/api/chat/cancel?conversation_id=${encodeURIComponent(state.currentConvId)}`
+            : "/api/chat/cancel";
+        await fetch(url, { method: "POST" });
+    } catch (_) { /* best effort */ }
+    state.isStreaming = false;
+    updateSendBtnState();
+    showToast("已停止生成", "info");
 }
 
 // ========== Chat Logic ==========
@@ -124,7 +174,15 @@ async function sendMessage() {
 
     // Stream response
     state.isStreaming = true;
+    updateSendBtnState();
     const aiMsgEl = addMessage("assistant", "", true);
+
+    // Track the full content assembled from tokens across all message turns.
+    // Each "message_end" event finalises the current turn (may contain
+    // <execute>...</execute>). "observation" events are appended as
+    // separate chunks so the frontend can render them incrementally.
+    let fullContent = "";       // running concatenation of ALL tokens + observations
+    let currentTurnText = "";   // tokens accumulated since the last message_end/observation
 
     try {
         const response = await fetch("/api/chat", {
@@ -140,30 +198,60 @@ async function sendMessage() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        let thinkingContent = "";
-        let codeContent = "";
-        let observationContent = "";
-        let solutionContent = "";
+
+        const handleEvent = (event) => {
+            switch (event.type) {
+                case "conversation_id":
+                    state.currentConvId = event.content;
+                    break;
+                case "token":
+                    currentTurnText += event.content;
+                    fullContent += event.content;
+                    renderStreamingMessage(aiMsgEl, fullContent);
+                    break;
+                case "message_end":
+                    // Server-side repairs (e.g. closing </execute>) may make
+                    // message_end slightly different from concatenated tokens.
+                    // Replace the current turn's text with the authoritative
+                    // version.
+                    const beforeTurn = fullContent.slice(0, fullContent.length - currentTurnText.length);
+                    fullContent = beforeTurn + event.content;
+                    currentTurnText = "";
+                    renderStreamingMessage(aiMsgEl, fullContent);
+                    break;
+                case "observation":
+                    // observation content already includes <observation>..</observation>
+                    fullContent += "\n" + event.content;
+                    currentTurnText = "";
+                    renderStreamingMessage(aiMsgEl, fullContent);
+                    break;
+                case "solution":
+                    // Server tells us the cleaned final answer. We prefer the
+                    // raw fullContent for display (it has all the intermediate
+                    // steps), but fall back to solution if full is empty.
+                    if (!fullContent.trim()) {
+                        fullContent = event.content;
+                        renderStreamingMessage(aiMsgEl, fullContent);
+                    }
+                    break;
+                case "error":
+                    fullContent += `\n\n❌ 错误: ${event.content}`;
+                    renderStreamingMessage(aiMsgEl, fullContent);
+                    break;
+                case "done":
+                    break;
+            }
+        };
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) {
-                // Process any remaining data in the buffer before exiting
                 if (buffer.trim()) {
-                    const remaining = buffer.split("\n");
-                    for (const line of remaining) {
+                    for (const line of buffer.split("\n")) {
                         if (!line.startsWith("data: ")) continue;
-                        const jsonStr = line.slice(6);
-                        if (!jsonStr) continue;
-                        try {
-                            const event = JSON.parse(jsonStr);
-                            if (event.type === "solution") solutionContent = event.content;
-                            else if (event.type === "error") solutionContent = `❌ 错误: ${event.content}`;
-                            else if (event.type === "thinking") thinkingContent += (thinkingContent ? "\n" : "") + event.content;
-                            else if (event.type === "code") codeContent += (codeContent ? "\n---\n" : "") + event.content;
-                            else if (event.type === "observation") observationContent += (observationContent ? "\n---\n" : "") + event.content;
-                            else if (event.type === "conversation_id") state.currentConvId = event.content;
-                        } catch (e) { /* skip */ }
+                        const j = line.slice(6).trim();
+                        if (!j) continue;
+                        try { handleEvent(JSON.parse(j)); } catch (_) { /* skip */ }
                     }
                 }
                 break;
@@ -175,55 +263,25 @@ async function sendMessage() {
 
             for (const line of lines) {
                 if (!line.startsWith("data: ")) continue;
-                const jsonStr = line.slice(6);
-                if (!jsonStr) continue;
-
-                try {
-                    const event = JSON.parse(jsonStr);
-                    switch (event.type) {
-                        case "conversation_id":
-                            state.currentConvId = event.content;
-                            break;
-                        case "thinking":
-                            thinkingContent += (thinkingContent ? "\n" : "") + event.content;
-                            break;
-                        case "code":
-                            codeContent += (codeContent ? "\n---\n" : "") + event.content;
-                            break;
-                        case "observation":
-                            observationContent += (observationContent ? "\n---\n" : "") + event.content;
-                            break;
-                        case "text":
-                            // Pure text response — treat as solution
-                            solutionContent += (solutionContent ? "\n" : "") + event.content;
-                            break;
-                        case "solution":
-                            solutionContent = event.content;
-                            break;
-                        case "error":
-                            solutionContent = `❌ 错误: ${event.content}`;
-                            break;
-                        case "done":
-                            break;
-                    }
-                    updateAIMessage(aiMsgEl, { thinking: thinkingContent, code: codeContent, observation: observationContent, solution: solutionContent });
-                } catch (e) { /* skip */ }
+                const j = line.slice(6).trim();
+                if (!j) continue;
+                try { handleEvent(JSON.parse(j)); } catch (_) { /* skip */ }
             }
         }
 
-        // Final render — ensure streaming indicator is gone and solution is shown
+        // Final render — streaming done, switch off the "in-progress" look
         state.isStreaming = false;
-        updateAIMessage(aiMsgEl, { thinking: thinkingContent, code: codeContent, observation: observationContent, solution: solutionContent || "(无响应)" });
+        renderStreamingMessage(aiMsgEl, fullContent || "(无响应)");
 
     } catch (e) {
         state.isStreaming = false;
-        updateAIMessage(aiMsgEl, { solution: `❌ 请求失败: ${e.message}` });
+        renderStreamingMessage(aiMsgEl, `❌ 请求失败: ${e.message}`);
     }
 
     state.isStreaming = false;
     updateSendBtnState();
     loadFiles();
-    loadConversations();  // Refresh sidebar to reflect updated title/timestamp
+    loadConversations();
 }
 
 function addMessage(role, content, isStreaming = false) {
@@ -253,34 +311,130 @@ function addMessage(role, content, isStreaming = false) {
     return msgEl;
 }
 
-function updateAIMessage(msgEl, { thinking, code, observation, solution }) {
+function renderStreamingMessage(msgEl, fullContent) {
+    /**
+     * Parse the full accumulating content into segments and render them
+     * incrementally. Handles intermixed <execute>...</execute> and
+     * <observation>...</observation> blocks, with narrative text in between.
+     *
+     * Segments are rendered in document order so the user sees the
+     * agent's reasoning → code → output flow as it streams.
+     */
     const body = msgEl.querySelector(".message-body");
+    const segments = parseSegments(fullContent);
     let html = "";
+    const streaming = state.isStreaming;
 
-    if (thinking) {
-        html += buildCollapsible("🤔 思考过程", thinking, "thinking", false);
-    }
-    if (code) {
-        html += buildCollapsible("💻 执行代码", `<pre><code>${escapeHtml(code)}</code></pre>`, "code", false, true);
-    }
-    if (observation) {
-        html += buildCollapsible("📊 执行结果", `<pre><code>${escapeHtml(observation)}</code></pre>`, "observation", false, true);
-    }
-    if (solution) {
-        html += `<div class="solution-content">${renderMarkdown(solution)}</div>`;
-    }
-    if (state.isStreaming && !solution) {
+    segments.forEach((seg, i) => {
+        const isLast = i === segments.length - 1;
+        const inProgress = streaming && isLast;
+        const statusOK = " ✓";
+        const statusRun = " ⏳";
+
+        if (seg.type === "text") {
+            // Plain narrative / thinking / final answer
+            if (seg.content.trim()) {
+                html += `<div class="solution-content">${renderMarkdown(seg.content)}</div>`;
+            }
+        } else if (seg.type === "code") {
+            const status = inProgress ? `${statusRun} 执行中...` : statusOK;
+            html += buildCollapsible(
+                `💻 执行代码${status}`,
+                `<pre><code>${escapeHtml(seg.content)}</code></pre>`,
+                "code",
+                inProgress,   // keep open while running
+                true,
+            );
+        } else if (seg.type === "observation") {
+            html += buildCollapsible(
+                `📊 执行结果${statusOK}`,
+                `<pre><code>${escapeHtml(seg.content)}</code></pre>`,
+                "observation",
+                inProgress,
+                true,
+            );
+        }
+    });
+
+    if (streaming) {
         html += '<div class="streaming-indicator"><span class="streaming-dot"></span><span class="streaming-dot"></span><span class="streaming-dot"></span></div>';
     }
 
+    if (!html.trim()) {
+        html = streaming
+            ? '<div class="streaming-indicator"><span class="streaming-dot"></span><span class="streaming-dot"></span><span class="streaming-dot"></span></div>'
+            : '<div class="solution-content"><em>(无响应)</em></div>';
+    }
+
     body.innerHTML = html;
-    body.querySelectorAll("pre code").forEach((block) => {
-        hljs.highlightElement(block);
-    });
+    body.querySelectorAll("pre code").forEach((block) => safeHighlight(block));
     scrollToBottom();
 }
 
-function buildCollapsible(title, content, type, defaultOpen = false, isRaw = false) {
+/**
+ * Split the agent's accumulating content into ordered segments of
+ * type "text" | "code" | "observation". Handles partially-streamed
+ * tags gracefully: if an <execute> tag has opened but hasn't closed
+ * yet, the partial content is treated as in-progress code.
+ */
+function parseSegments(content) {
+    const segs = [];
+    // Strip the <done/> terminator — it's meta, not display content.
+    const src = content.replace(/<done\s*\/?>/g, "");
+
+    // Single regex to find the start of any block. We parse forward
+    // from lastIndex to capture the text segments in between.
+    const tagRe = /<(execute|observation)>/g;
+    let lastIndex = 0;
+    let m;
+
+    while ((m = tagRe.exec(src)) !== null) {
+        // Text before this tag
+        if (m.index > lastIndex) {
+            segs.push({ type: "text", content: src.slice(lastIndex, m.index) });
+        }
+        const tagName = m[1];
+        const closeTag = `</${tagName}>`;
+        const closeIdx = src.indexOf(closeTag, tagRe.lastIndex);
+        if (closeIdx === -1) {
+            // Tag hasn't closed yet — show the partial body in-progress.
+            segs.push({
+                type: tagName === "execute" ? "code" : "observation",
+                content: src.slice(tagRe.lastIndex),
+            });
+            lastIndex = src.length;
+            break;
+        } else {
+            segs.push({
+                type: tagName === "execute" ? "code" : "observation",
+                content: src.slice(tagRe.lastIndex, closeIdx),
+            });
+            lastIndex = closeIdx + closeTag.length;
+            tagRe.lastIndex = lastIndex;
+        }
+    }
+
+    // Trailing text
+    if (lastIndex < src.length) {
+        segs.push({ type: "text", content: src.slice(lastIndex) });
+    }
+
+    return segs;
+}
+
+// Legacy function — kept because conversation hydration calls it with
+// a solution-only object.
+function updateAIMessage(msgEl, { thinking, code, observation, solution }) {
+    // Reconstruct a full-content string from the pieces and delegate.
+    const parts = [];
+    if (thinking) parts.push(thinking);
+    if (code) parts.push(`<execute>${code}</execute>`);
+    if (observation) parts.push(`<observation>${observation}</observation>`);
+    if (solution) parts.push(solution);
+    renderStreamingMessage(msgEl, parts.join("\n"));
+}
+
+function buildCollapsible(title, content, _type, defaultOpen = false, isRaw = false) {
     const openClass = defaultOpen ? "open" : "";
     const renderedContent = isRaw ? content : `<div>${escapeHtml(content).replace(/\n/g, "<br>")}</div>`;
     return `
@@ -407,7 +561,13 @@ function removeReferencedFile(index) {
 }
 
 async function downloadFile(filename) {
-    window.open(`/api/files/${encodeURIComponent(filename)}`, "_blank");
+    // Use a hidden <a> with download attribute to force browser download
+    const a = document.createElement("a");
+    a.href = `/api/files/${encodeURIComponent(filename)}`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 }
 
 async function deleteFile(filename) {
@@ -435,10 +595,9 @@ function previewFile(filename) {
         contentHtml = `<img src="${fileUrl}" class="preview-image" alt="${escapeHtml(filename)}">`;
     } else if (ext === "pdf") {
         contentHtml = `
-            <iframe src="${fileUrl}" class="preview-pdf" title="PDF Preview"></iframe>
-            <div class="preview-pdf-fallback">
-                <p>如果 PDF 未显示，请 <a href="/api/files/${encodeURIComponent(filename)}" target="_blank">点击下载</a></p>
-            </div>
+            <object data="${fileUrl}" type="application/pdf" class="preview-pdf">
+                <p>浏览器无法预览 PDF。<a href="/api/files/${encodeURIComponent(filename)}" download="${escapeHtml(filename)}">点击下载</a></p>
+            </object>
         `;
     } else if (ext === "md") {
         // Markdown: render as formatted HTML
@@ -450,7 +609,7 @@ function previewFile(filename) {
                 const container = $(".preview-body");
                 if (container) {
                     container.innerHTML = `<div class="preview-markdown message-body">${renderMarkdown(text)}</div>`;
-                    container.querySelectorAll("pre code").forEach(b => hljs.highlightElement(b));
+                    container.querySelectorAll("pre code").forEach(b => safeHighlight(b));
                 }
             })
             .catch(() => {
@@ -473,7 +632,7 @@ function previewFile(filename) {
                 const container = $(".preview-body");
                 if (container) {
                     container.innerHTML = `<pre class="preview-text-content"><code>${escapeHtml(previewText)}</code></pre>`;
-                    container.querySelectorAll("pre code").forEach(b => hljs.highlightElement(b));
+                    container.querySelectorAll("pre code").forEach(b => safeHighlight(b));
                 }
             })
             .catch((err) => {
