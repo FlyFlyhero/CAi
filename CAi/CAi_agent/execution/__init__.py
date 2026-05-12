@@ -5,7 +5,7 @@ they just know how to "run some code and return a string".
 """
 
 from .bash import run_bash_script
-from .repl import inject_custom_functions, reset_namespace, run_python_repl
+from .repl import inject_custom_functions, reset_namespace, run_python_repl, set_workspace_dir
 from .timeout import run_with_timeout
 
 __all__ = [
@@ -14,4 +14,5 @@ __all__ = [
     "run_bash_script",
     "run_python_repl",
     "run_with_timeout",
+    "set_workspace_dir",
 ]

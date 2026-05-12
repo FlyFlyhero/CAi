@@ -38,8 +38,8 @@ app = FastAPI(title="CAi Web UI API", version="2.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["http://localhost:7000", "http://127.0.0.1:7000"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -88,12 +88,20 @@ class UpdateTitleRequest(BaseModel):
 # ========== Helpers ==========
 
 
+def _safe_path(filename: str) -> str:
+    """Resolve path and ensure it stays within the workspace directory."""
+    resolved = os.path.realpath(os.path.join(_workspace_dir, os.path.basename(filename)))
+    if not resolved.startswith(os.path.realpath(_workspace_dir)):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return resolved
+
+
 def _build_prompt(text: str, ref_files: list[str]) -> str:
     """Build the prompt sent to the agent."""
     prompt = text
     prompt += f"\n\n[工作目录]: {_workspace_dir}"
     for f in ref_files:
-        target = os.path.join(_workspace_dir, f)
+        target = os.path.join(_workspace_dir, os.path.basename(f))
         prompt += f"\n[引用文件]: {target}"
     return prompt
 
@@ -272,22 +280,22 @@ async def chat(request: ChatRequest):
                 cancel_ev = asyncio.Event()
                 _cancel_events[conv_id] = cancel_ev
 
-                async for step in _async_iter_agent(agent_prompt, history, cancel_ev):
-                    ev_type = step.get("type")
-                    ev_content = step.get("content", "")
+                try:
+                    async for step in _async_iter_agent(agent_prompt, history, cancel_ev):
+                        ev_type = step.get("type")
+                        ev_content = step.get("content", "")
 
-                    if ev_type == "token":
-                        # Forward raw token; the frontend assembles and parses.
-                        yield f"data: {json.dumps({'type': 'token', 'content': ev_content}, ensure_ascii=False)}\n\n"
-                    elif ev_type == "message_end":
-                        last_full_message = ev_content
-                        yield f"data: {json.dumps({'type': 'message_end', 'content': ev_content}, ensure_ascii=False)}\n\n"
-                    elif ev_type == "observation":
-                        yield f"data: {json.dumps({'type': 'observation', 'content': ev_content}, ensure_ascii=False)}\n\n"
-
-                # Clean up cancel event
-                _cancel_events.pop(conv_id, None)
-
+                        if ev_type == "token":
+                            # Forward raw token; the frontend assembles and parses.
+                            yield f"data: {json.dumps({'type': 'token', 'content': ev_content}, ensure_ascii=False)}\n\n"
+                        elif ev_type == "message_end":
+                            last_full_message = ev_content
+                            yield f"data: {json.dumps({'type': 'message_end', 'content': ev_content}, ensure_ascii=False)}\n\n"
+                        elif ev_type == "observation":
+                            yield f"data: {json.dumps({'type': 'observation', 'content': ev_content}, ensure_ascii=False)}\n\n"
+                finally:
+                    # Always clean up — covers normal exit, cancel, and disconnect.
+                    _cancel_events.pop(conv_id, None)
                 # Final cleaned answer for storage + a "solution" event.
                 stored_answer = _clean_stored_answer(last_full_message) or last_full_message
                 yield f"data: {json.dumps({'type': 'solution', 'content': stored_answer}, ensure_ascii=False)}\n\n"
@@ -326,11 +334,12 @@ async def chat(request: ChatRequest):
 async def upload_files(files: list[UploadFile] = File(...)):
     uploaded = []
     for file in files:
-        target = os.path.join(_workspace_dir, file.filename)
+        safe_name = os.path.basename(file.filename or "upload")
+        target = _safe_path(safe_name)
         with open(target, "wb") as f:
             content = await file.read()
             f.write(content)
-        uploaded.append(file.filename)
+        uploaded.append(safe_name)
     return {"uploaded": uploaded}
 
 
@@ -353,7 +362,7 @@ async def list_files():
 
 @app.get("/api/files/{filename}")
 async def download_file(filename: str, inline: int = 0):
-    fp = os.path.join(_workspace_dir, filename)
+    fp = _safe_path(filename)
     if not os.path.exists(fp):
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -406,7 +415,7 @@ def _guess_media_type(filename: str) -> str:
 
 @app.delete("/api/files/{filename}")
 async def delete_file(filename: str):
-    fp = os.path.join(_workspace_dir, filename)
+    fp = _safe_path(filename)
     if not os.path.exists(fp):
         raise HTTPException(status_code=404, detail="File not found")
     os.remove(fp)
@@ -479,15 +488,11 @@ async def reset_all():
 
 @app.post("/api/chat/cancel")
 async def cancel_chat(conversation_id: str | None = None):
-    """Signal a running chat stream to stop.
-
-    The streaming loop checks the cancel event between chunks and exits
-    cleanly. The already-generated content up to that point is still
-    persisted to the conversation.
-    """
-    cid = conversation_id or "current"
-    ev = _cancel_events.get(cid)
+    """Signal a running chat stream to stop."""
+    if not conversation_id:
+        return {"status": "no_conversation_id"}
+    ev = _cancel_events.get(conversation_id)
     if ev:
         ev.set()
-        return {"status": "cancelled", "conversation_id": cid}
-    return {"status": "no_active_stream", "conversation_id": cid}
+        return {"status": "cancelled", "conversation_id": conversation_id}
+    return {"status": "no_active_stream", "conversation_id": conversation_id}

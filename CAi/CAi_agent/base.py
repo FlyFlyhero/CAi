@@ -17,8 +17,9 @@ Concurrency note:
 from __future__ import annotations
 
 import builtins
+import logging
 import re
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from threading import Lock
 from typing import Any
 
@@ -32,8 +33,14 @@ from .execution import (
 )
 from .llm import SourceType, get_llm
 
+logger = logging.getLogger(__name__)
+
 # Maximum number of generate→execute cycles before we give up (safety net).
 _MAX_ITERATIONS = 50
+
+# Default: keep the most recent N message pairs when history is too long.
+# Each "pair" is roughly one user + one assistant message.
+_DEFAULT_MAX_HISTORY_PAIRS = 40
 
 
 class BaseAgent:
@@ -55,9 +62,15 @@ class BaseAgent:
         temperature: float | None = None,
         timeout_seconds: int = 600,
         system_prompt: str | None = None,
+        max_history_pairs: int = _DEFAULT_MAX_HISTORY_PAIRS,
+        context_compress_hook: Callable[[list[dict]], list[dict]] | None = None,
     ):
         self.timeout_seconds = timeout_seconds
         self._system_prompt = system_prompt or self._default_system_prompt()
+        self.max_history_pairs = max_history_pairs
+        # Hook for future advanced context compression (e.g. LLM-based summary).
+        # Signature: (history: list[dict]) -> list[dict]
+        self._context_compress_hook = context_compress_hook
 
         # Init LLM. api_key=None lets the factory read the provider-specific
         # env var ("EMPTY" is used automatically for Custom endpoints that
@@ -172,7 +185,14 @@ RULES:
     # ------------------------------------------------------------------
 
     def _build_messages(self, prompt: str, history: list[dict]) -> list[BaseMessage]:
-        """Convert caller-supplied history + new prompt into LangChain messages."""
+        """Convert caller-supplied history + new prompt into LangChain messages.
+
+        If history exceeds `max_history_pairs` messages, the older portion is
+        either compressed via `_context_compress_hook` (if set) or simply
+        truncated with a short notice so the LLM knows context was trimmed.
+        """
+        history = self._maybe_compress_history(history)
+
         messages: list[BaseMessage] = [SystemMessage(content=self._system_prompt)]
         for m in history:
             role = m.get("role")
@@ -186,6 +206,29 @@ RULES:
         messages.append(HumanMessage(content=prompt))
         return messages
 
+    def _maybe_compress_history(self, history: list[dict]) -> list[dict]:
+        """Apply sliding window or custom compression to history."""
+        max_msgs = self.max_history_pairs * 2  # pairs → individual messages
+
+        if len(history) <= max_msgs:
+            return history
+
+        # If a custom hook is provided, delegate to it.
+        if self._context_compress_hook is not None:
+            try:
+                return self._context_compress_hook(history)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Context compress hook failed: %s; falling back to truncation", e)
+
+        # Default: keep recent messages, prepend a notice.
+        recent = history[-max_msgs:]
+        trimmed_count = len(history) - max_msgs
+        notice = {
+            "role": "assistant",
+            "content": f"[注意：前面 {trimmed_count} 条消息已省略以节省上下文空间。]",
+        }
+        return [notice] + recent
+
     def _invoke_llm_full(self, messages: list[BaseMessage]) -> str:
         """Blocking LLM call — returns full response as a string."""
         response = self.llm.invoke(messages)
@@ -195,9 +238,7 @@ RULES:
             content += "</execute>"
         return content.strip()
 
-    def _stream_llm(
-        self, messages: list[BaseMessage]
-    ) -> Generator[tuple[str, str], None, None]:
+    def _stream_llm(self, messages: list[BaseMessage]) -> Generator[tuple[str, str], None, None]:
         """Stream LLM tokens.
 
         Yields (kind, text) tuples:
@@ -242,9 +283,7 @@ RULES:
             final = step["content"]
         return log, final
 
-    def run_with_history(
-        self, prompt: str, history: list[dict]
-    ) -> Generator[dict, None, None]:
+    def run_with_history(self, prompt: str, history: list[dict]) -> Generator[dict, None, None]:
         """Non-streaming: run the agent to completion, yielding one dict
         per complete AIMessage (including observations).
 
@@ -274,9 +313,7 @@ RULES:
     # Public API — streaming
     # ------------------------------------------------------------------
 
-    def run_with_history_streaming(
-        self, prompt: str, history: list[dict]
-    ) -> Generator[dict, None, None]:
+    def run_with_history_streaming(self, prompt: str, history: list[dict]) -> Generator[dict, None, None]:
         """Streaming: drive the agent loop and yield fine-grained events.
 
         Events:

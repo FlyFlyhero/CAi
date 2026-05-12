@@ -11,18 +11,17 @@ A thin `exec()` wrapper that:
   - configures matplotlib to use CJK-capable fonts on first use
     (avoids the 'Glyph XXX missing from font DejaVu Sans' warnings
     that flood stderr whenever the agent generates Chinese plot labels)
-
-Deliberately omitted (present in the old base_CAi helper, not needed here):
-  - matplotlib monkey-patching and plot capture — we don't surface plots
-    through the agent right now. If that's needed later we can add an
-    opt-in hook; keeping this module minimal keeps the contract simple.
+  - auto-captures matplotlib figures after each execution and saves
+    them to the workspace directory so the frontend can render them
 """
 
 from __future__ import annotations
 
 import builtins
+import os
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from io import StringIO
 
 # The namespace shared across all run_python_repl() calls.
@@ -37,6 +36,21 @@ _CUSTOM_FNS_ATTR = "_base_CAi_custom_functions"
 # this process. Import and configuration only run on first REPL call
 # that actually imports matplotlib.
 _MPL_CONFIGURED = False
+
+# Where captured plots get saved. Set by the backend via
+# set_workspace_dir(). Falls back to cwd if never set.
+_WORKSPACE_DIR: str | None = None
+
+
+def set_workspace_dir(path: str) -> None:
+    """Configure where auto-captured plots are saved.
+
+    Called by the backend during startup so figures land in the same
+    workspace the frontend lists and previews.
+    """
+    global _WORKSPACE_DIR
+    _WORKSPACE_DIR = path
+    os.makedirs(path, exist_ok=True)
 
 
 def _configure_matplotlib_cjk() -> None:
@@ -95,7 +109,13 @@ def _configure_matplotlib_cjk() -> None:
 
 def run_python_repl(code: str) -> str:
     """Execute `code` in the persistent namespace; return captured stdout
-    (or an 'Error: ...' message)."""
+    (or an 'Error: ...' message).
+
+    After execution:
+      1. Any open matplotlib figures are auto-saved to the workspace.
+      2. Any new image files created in the workspace during execution
+         (by RDKit, Pillow, plotly, etc.) are detected and reported.
+    """
     code = (code or "").strip("`").strip()
 
     # Ensure any custom tools registered since the last call are visible.
@@ -104,16 +124,37 @@ def run_python_repl(code: str) -> str:
     # Configure matplotlib CJK fonts once (best-effort, silent on failure).
     _configure_matplotlib_cjk()
 
+    # Force matplotlib to use non-interactive backend so plt.show() doesn't
+    # block and figures are retained for capture.
+    _ensure_agg_backend()
+
+    # Snapshot existing image files before execution
+    images_before = _snapshot_workspace_images()
+
     old_stdout = sys.stdout
     sys.stdout = buf = StringIO()
     try:
         exec(code, _PERSISTENT_NS)  # noqa: S102 — intentional; REPL-like env
-        return buf.getvalue()
+        output = buf.getvalue()
     except Exception as e:  # noqa: BLE001 — surfaced to caller as string
-        # Keep partial stdout even when the exec fails.
-        return buf.getvalue() + f"Error: {e}"
+        output = buf.getvalue() + f"Error: {e}"
     finally:
         sys.stdout = old_stdout
+
+    # Auto-capture any matplotlib figures that were created during execution.
+    saved_plots = _capture_plots()
+
+    # Detect any new image files created by other libraries (RDKit, Pillow, etc.)
+    new_images = _detect_new_images(images_before)
+
+    # Combine all discovered images (deduplicate)
+    all_images = list(dict.fromkeys(saved_plots + new_images))
+
+    if all_images:
+        plot_lines = "\n".join(f"[Image saved]: {p}" for p in all_images)
+        output = output + "\n" + plot_lines + "\n"
+
+    return output
 
 
 def inject_custom_functions(custom_functions: dict[str, Callable]) -> None:
@@ -153,3 +194,100 @@ def _sync_custom_fns_into_namespace() -> None:
     if registry:
         for name, func in registry.items():
             _PERSISTENT_NS.setdefault(name, func)
+
+
+# ---------------------------------------------------------------------------
+# Matplotlib plot capture
+# ---------------------------------------------------------------------------
+
+_AGG_SET = False
+
+
+def _ensure_agg_backend() -> None:
+    """Switch matplotlib to the non-interactive 'Agg' backend.
+
+    This prevents plt.show() from opening a GUI window and ensures
+    figures stay in memory so we can save them. Only runs once.
+    """
+    global _AGG_SET
+    if _AGG_SET:
+        return
+    _AGG_SET = True
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+    except (ImportError, Exception):
+        pass
+
+
+def _capture_plots() -> list[str]:
+    """Save all open matplotlib figures to disk and close them.
+
+    Returns a list of absolute file paths for saved images.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return []
+
+    figs = [plt.figure(n) for n in plt.get_fignums()]
+    if not figs:
+        return []
+
+    save_dir = _WORKSPACE_DIR or os.getcwd()
+    os.makedirs(save_dir, exist_ok=True)
+
+    saved = []
+    for i, fig in enumerate(figs):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        filename = f"plot_{timestamp}_{i}.png"
+        filepath = os.path.join(save_dir, filename)
+        try:
+            fig.savefig(filepath, dpi=150, bbox_inches="tight", facecolor="white")
+            saved.append(filepath)
+        except Exception:
+            pass  # Don't let save failures break execution
+
+    # Close all figures to free memory
+    plt.close("all")
+    return saved
+
+
+# ---------------------------------------------------------------------------
+# Generic image file detection (RDKit, Pillow, plotly, etc.)
+# ---------------------------------------------------------------------------
+
+_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".svg", ".gif", ".bmp", ".webp", ".tiff"})
+
+
+def _snapshot_workspace_images() -> set[str]:
+    """Return the set of image file paths currently in the workspace."""
+    save_dir = _WORKSPACE_DIR
+    if not save_dir or not os.path.isdir(save_dir):
+        return set()
+    result = set()
+    try:
+        for f in os.listdir(save_dir):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in _IMAGE_EXTENSIONS:
+                result.add(os.path.join(save_dir, f))
+    except OSError:
+        pass
+    return result
+
+
+def _detect_new_images(before: set[str]) -> list[str]:
+    """Return image files that appeared in the workspace since `before` snapshot."""
+    save_dir = _WORKSPACE_DIR
+    if not save_dir or not os.path.isdir(save_dir):
+        return []
+    after = set()
+    try:
+        for f in os.listdir(save_dir):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in _IMAGE_EXTENSIONS:
+                after.add(os.path.join(save_dir, f))
+    except OSError:
+        return []
+    new_files = sorted(after - before)
+    return new_files

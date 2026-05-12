@@ -36,8 +36,13 @@ PLANNING (for multi-step tasks):
 - Update the plan after each step.
 
 COMPLETION:
-- When the task is fully done, end your message with <done/>
-- For simple questions, just answer directly (no <done/> needed)."""
+- After code execution, you MUST provide a text summary of the results in
+  the SAME response or in your next message. Never leave the final answer
+  buried inside an <observation> block alone.
+- When the task is fully done, end your final text summary with <done/>
+- For simple questions, just answer directly (no <done/> needed).
+- Do NOT end a turn with only <execute> and no follow-up text — always
+  explain what the results mean after you see the observation."""
 
 
 class CoreSection(PromptSection):

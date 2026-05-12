@@ -1395,3 +1395,17 @@ body {
 .btn-send.btn-stop:hover {
     background: #dc2626 !important;
 }
+
+/* ========== Plot Preview in Observations ========== */
+.plot-preview {
+    margin: 10px 0;
+    text-align: center;
+}
+
+.plot-preview img {
+    max-width: 100%;
+    max-height: 500px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-sm);
+}
