@@ -20,6 +20,7 @@ export const $ = (sel) => document.querySelector(sel);
 export function safeHighlight(block) {
     try {
         if (typeof hljs !== "undefined" && hljs?.highlightElement) {
+            block.removeAttribute("data-highlighted");
             hljs.highlightElement(block);
         }
     } catch (_) { /* ignore */ }

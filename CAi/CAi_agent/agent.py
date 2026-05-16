@@ -13,6 +13,7 @@ A1pro 本身只做编排工作：
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from pathlib import Path
 
 from CAi.CAi_agent.base import BaseAgent
 from CAi.CAi_agent.prompt import (
@@ -53,12 +54,9 @@ class A1pro(BaseAgent):
         auto_load_skills: bool = True,
         skills_dir: str | None = None,
         exclude_skills: Iterable[str] | None = None,
-        # Legacy compat (ignored, kept so older callers don't break)
-        use_tool_retriever: bool = False,
-        expected_data_lake_files: list | None = None,
-        commercial_mode: bool = False,
-        path: str | None = None,
-        **kwargs,
+        # Utilities
+        auto_load_utilities: bool = True,
+        utilities_dir: str | None = None,
     ):
         # -------- Tool subsystem ---------------------------------------
         self.tool_registry = ToolRegistry()
@@ -80,6 +78,21 @@ class A1pro(BaseAgent):
             SkillLoader(skills_dir) if auto_load_skills else None
         )
 
+        # -------- Utility subsystem ------------------------------------
+        self.utility_registry = None
+        if auto_load_utilities:
+            from CAi.CAi_agent.utilities import UtilityRegistry
+
+            util_dir = Path(utilities_dir) if utilities_dir else Path("agent_workspace/_utilities")
+            self.utility_registry = UtilityRegistry(util_dir)
+
+            # Inject into REPL with monitoring
+            utilities = self.utility_registry.load_snapshot()
+            if utilities:
+                from CAi.CAi_agent.execution.repl import inject_utilities_with_monitoring
+
+                inject_utilities_with_monitoring(utilities)
+
         # -------- Base agent (builds LLM + workflow) -------------------
         super().__init__(
             llm=llm,
@@ -92,21 +105,23 @@ class A1pro(BaseAgent):
         )
 
         # -------- Prompt subsystem -------------------------------------
-        self.prompt_builder = (
-            PromptBuilder()
-            .add(CoreSection())
-            .add(ToolsSection(self.tool_registry))
-            .add(SkillsSection(self.skill_loader, self.exclude_skills))
-        )
+        builder = PromptBuilder().add(CoreSection()).add(ToolsSection(self.tool_registry))
+        if self.utility_registry:
+            from CAi.CAi_agent.utilities import UtilitiesSection
+
+            builder.add(UtilitiesSection(self.utility_registry))
+        builder.add(SkillsSection(self.skill_loader, self.exclude_skills))
+        self.prompt_builder = builder
 
         # Registry → prompt: auto-rebuild whenever tools change.
         self.tool_registry.on_change(self._rebuild_prompt)
         self._rebuild_prompt()
 
         logger.info(
-            "A1pro ready — %d tools, %d skills",
+            "A1pro ready — %d tools, %d skills, %d utilities",
             len(self.tool_registry),
             len(self.list_skills()),
+            len(self.utility_registry) if self.utility_registry else 0,
         )
 
     # ------------------------------------------------------------------

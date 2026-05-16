@@ -37,10 +37,11 @@ def test_captures_stdout():
 
 
 def test_evaluates_expression_without_print():
-    """Expressions without print produce no output (matches CPython REPL
-    semantics for exec)."""
+    """IPython kernel surfaces the repr of the last expression as output
+    (execute_result), matching notebook semantics — more useful for an AI
+    agent than the old exec() 'no output' behaviour."""
     out = run_python_repl("1 + 1")
-    assert out == ""
+    assert "2" in out
 
 
 def test_persistent_namespace_across_calls():

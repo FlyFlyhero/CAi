@@ -26,6 +26,10 @@ dependencies = [
     # Utilities
     "python-dotenv>=1.0",
     "requests>=2.31",
+    # Jupyter kernel for code execution (real process isolation + true timeout)
+    "jupyter_client>=8.0",
+    "ipykernel>=6.0",
+    "cloudpickle>=3.0",
     # PDF export
     "markdown>=3.5",
     "weasyprint>=60.0",

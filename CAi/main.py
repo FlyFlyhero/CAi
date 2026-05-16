@@ -4,6 +4,12 @@ Reads configuration from CAi/config.py (which loads CAi/.env), builds
 an A1pro agent, and launches the Web UI. Provider auto-detection
 happens inside A1pro based on LLM_MODEL; override it by setting
 LLM_SOURCE in the .env file.
+
+CLI usage examples:
+  python -m CAi.main
+  python -m CAi.main --port 9000
+  python -m CAi.main --model deepseek-chat --source Custom --base-url http://localhost:8080/v1
+  python -m CAi.main --port 7000 --model claude-opus-4-5 --temperature 0.3
 """
 
 # Silence a benign langgraph 0.6 deprecation notice about `allowed_objects`.
@@ -16,6 +22,7 @@ warnings.filterwarnings(
     category=Warning,
 )
 
+import argparse
 import socket
 import sys
 
@@ -31,16 +38,50 @@ from CAi.config import (
 WEB_UI_PORT = 8888
 
 
-def _startup_summary() -> None:
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m CAi.main",
+        description="Launch the CAi Web UI.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--port", type=int, default=WEB_UI_PORT,
+        help="Port to serve the Web UI on.",
+    )
+    parser.add_argument(
+        "--model", default=LLM_MODEL,
+        help="LLM model identifier (overrides LLM_MODEL in .env).",
+    )
+    parser.add_argument(
+        "--source", default=LLM_SOURCE,
+        help="LLM provider (Anthropic/OpenAI/DeepSeek/Custom). None = auto-detect.",
+    )
+    parser.add_argument(
+        "--base-url", default=LLM_BASE_URL, dest="base_url",
+        help="OpenAI-compatible base URL for Custom provider.",
+    )
+    parser.add_argument(
+        "--api-key", default=LLM_API_KEY, dest="api_key",
+        help="API key (overrides LLM_API_KEY in .env).",
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=LLM_TEMPERATURE,
+        help="Sampling temperature.",
+    )
+    return parser.parse_args()
+
+
+def _startup_summary(args: argparse.Namespace) -> None:
     """Print effective LLM config before anything else, so if the agent
     fails to initialise the user can see which knobs were read."""
     print("=" * 50)
     print("CAi starting with:")
-    print(f"  LLM_MODEL       = {LLM_MODEL!r}")
-    print(f"  LLM_SOURCE      = {LLM_SOURCE!r}  (None = auto-detect)")
-    print(f"  LLM_BASE_URL    = {LLM_BASE_URL!r}")
-    print(f"  LLM_API_KEY     = {'<set>' if LLM_API_KEY else '<EMPTY — requests will 401>'}")
-    print(f"  LLM_TEMPERATURE = {LLM_TEMPERATURE}")
+    print(f"  LLM_MODEL       = {args.model!r}")
+    print(f"  LLM_SOURCE      = {args.source!r}  (None = auto-detect)")
+    print(f"  LLM_BASE_URL    = {args.base_url!r}")
+    print(f"  LLM_API_KEY     = {'<set>' if args.api_key else '<EMPTY — requests will 401>'}")
+    print(f"  LLM_TEMPERATURE = {args.temperature}")
+    print(f"  PORT            = {args.port}")
     print("=" * 50)
 
 
@@ -72,15 +113,16 @@ def _check_port_free(port: int) -> None:
 
 
 def main() -> None:
-    _startup_summary()
-    _check_port_free(WEB_UI_PORT)
+    args = _parse_args()
+    _startup_summary(args)
+    _check_port_free(args.port)
     try:
         agent = A1pro(
-            llm=LLM_MODEL,
-            source=LLM_SOURCE,  # None → auto-detect from model name
-            base_url=LLM_BASE_URL,
-            api_key=LLM_API_KEY,
-            temperature=LLM_TEMPERATURE,
+            llm=args.model,
+            source=args.source,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            temperature=args.temperature,
         )
     except Exception as e:
         print(f"\n❌ Agent initialisation failed: {type(e).__name__}: {e}", file=sys.stderr)
@@ -96,7 +138,7 @@ def main() -> None:
         raise
 
     # Launch the Web UI (FastAPI + static frontend). See CAi/web_ui/launch.py.
-    agent.launch_web_ui(port=WEB_UI_PORT)
+    agent.launch_web_ui(port=args.port)
 
 
 if __name__ == "__main__":

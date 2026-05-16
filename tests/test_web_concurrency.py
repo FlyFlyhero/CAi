@@ -20,44 +20,44 @@ def _reset_custom_functions():
 
 
 def test_extract_parts_plain_text():
-    from CAi.web_ui.backend.app import _extract_parts
+    from CAi.web_ui.backend.chat_service import extract_parts
 
-    parts = _extract_parts("Hello world")
+    parts = extract_parts("Hello world")
     assert parts == {"text": "Hello world"}
 
 
 def test_extract_parts_with_thinking_and_code():
-    from CAi.web_ui.backend.app import _extract_parts
+    from CAi.web_ui.backend.chat_service import extract_parts
 
     content = "Let me think about this.\n<execute>print(1)</execute>"
-    parts = _extract_parts(content)
+    parts = extract_parts(content)
     assert "thinking" in parts
     assert "Let me think about this" in parts["thinking"]
     assert parts["code"] == "print(1)"
 
 
 def test_extract_parts_observation():
-    from CAi.web_ui.backend.app import _extract_parts
+    from CAi.web_ui.backend.chat_service import extract_parts
 
     content = "<observation>\nresult = 42\n</observation>"
-    parts = _extract_parts(content)
+    parts = extract_parts(content)
     assert "observation" in parts
     assert "42" in parts["observation"]
 
 
 def test_extract_parts_strips_done_tag_from_text():
-    from CAi.web_ui.backend.app import _extract_parts
+    from CAi.web_ui.backend.chat_service import extract_parts
 
-    parts = _extract_parts("Final answer is X. <done/>")
+    parts = extract_parts("Final answer is X. <done/>")
     assert parts.get("text") == "Final answer is X."
     assert "<done/>" not in parts.get("text", "")
 
 
 def test_extract_parts_multiple_execute_blocks():
-    from CAi.web_ui.backend.app import _extract_parts
+    from CAi.web_ui.backend.chat_service import extract_parts
 
     content = "<execute>a=1</execute>\n<execute>b=2</execute>"
-    parts = _extract_parts(content)
+    parts = extract_parts(content)
     assert "a=1" in parts["code"]
     assert "b=2" in parts["code"]
 
@@ -79,13 +79,13 @@ def test_chat_lock_is_asyncio_lock():
     """
     import asyncio
 
-    from CAi.web_ui.backend.app import _chat_lock
+    from CAi.web_ui.backend.deps import get_chat_lock
 
-    assert isinstance(_chat_lock, asyncio.Lock)
+    assert isinstance(get_chat_lock(), asyncio.Lock)
 
 
 def test_async_iter_agent_helper_exists():
     """Verify the async wrapper for the sync generator is importable."""
-    from CAi.web_ui.backend.app import _async_iter_agent
+    from CAi.web_ui.backend.chat_service import async_iter_agent
 
-    assert callable(_async_iter_agent)
+    assert callable(async_iter_agent)

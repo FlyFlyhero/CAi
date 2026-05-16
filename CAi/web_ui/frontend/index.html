@@ -199,6 +199,26 @@
         </main>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=3"></script>
+    <!-- Utility Maintenance Popup -->
+    <div class="maintenance-popup" id="maintenancePopup" style="display:none;">
+        <div class="maintenance-popup-content">
+            <div class="maintenance-popup-icon">🔧</div>
+            <div class="maintenance-popup-text">检测到代码执行，是否整理工具库？</div>
+            <div class="maintenance-popup-actions">
+                <button class="btn btn-sm btn-maintenance btn-maintenance-preview" id="maintenancePreviewBtn" title="先看看会做什么">
+                    询问
+                </button>
+                <button class="btn btn-sm btn-maintenance btn-maintenance-execute" id="maintenanceExecuteBtn" title="直接执行整理">
+                    执行
+                </button>
+                <button class="btn btn-sm btn-maintenance btn-maintenance-skip" id="maintenanceSkipBtn" title="跳过本次">
+                    跳过
+                </button>
+            </div>
+        </div>
+        <div class="maintenance-popup-result" id="maintenanceResult" style="display:none;"></div>
+    </div>
+
+    <script type="module" src="/static/js/main.js?v=5"></script>
 </body>
 </html>

@@ -54,27 +54,42 @@ Specialised cases handled:
 - DeepSeek is OpenAI-compatible; we point `ChatOpenAI` at the official
   endpoint instead of introducing a separate client.
 - `Custom` is the catch-all for local SGLang / vLLM servers or any
-  corporate OpenAI-compatible proxy.
+  corporate OpenAI-compatible proxy. Set `LLM_API_KEY=EMPTY` for
+  unauthenticated local endpoints.
+
+Auto-detection order: `LLM_SOURCE` env var takes precedence; if unset,
+the model name prefix determines the provider.
 
 ### Code execution subsystem
 
 `CAi/CAi_agent/execution/`
 
-Three small, self-contained helpers. No external dependencies beyond
-the Python standard library:
-
 ```
 execution/
-├── repl.py       # persistent-namespace Python REPL (exec + stdout capture)
-├── bash.py       # run_bash_script — subprocess wrapper, bash-explicit
-└── timeout.py    # run_with_timeout — ThreadPoolExecutor-based deadline
+├── repl.py       # Jupyter kernel REPL — process isolation, ZeroMQ stdout capture
+├── bash.py       # run_bash_script — subprocess wrapper
+└── timeout.py    # run_with_timeout — ThreadPoolExecutor deadline (used by bash only)
 ```
 
-`BaseAgent._node_execute` invokes these through `run_with_timeout` so
-each <execute> block has a wall-clock limit. When the agent's REPL
-bridge (`tools/repl_bridge.py`) updates the tool namespace, the REPL
-picks those tools up on the next call via
-`builtins._base_CAi_custom_functions`.
+`repl.py` runs Python in a persistent **Jupyter IPython kernel** (a
+separate OS process). This gives true timeout enforcement via SIGINT /
+SIGKILL, thread-safe output capture over ZeroMQ, and the ability to
+restart the kernel after a hang without touching the parent process.
+
+Python `<execute>` blocks call `run_python_repl(code, timeout)` directly
+(timeout enforced inside the kernel loop). Bash `<execute>#!BASH` blocks
+still go through `run_with_timeout(run_bash_script, ...)`.
+
+Tool functions are injected into the kernel via **cloudpickle**
+serialisation so closures and locally-defined callables work. The
+`builtins._base_CAi_custom_functions` registry is kept in sync for
+ReplBridge compatibility.
+
+`set_workspace_dir(path)` configures where matplotlib figures are
+auto-saved; new image files in the workspace are detected after each
+execution and reported in the output so the web UI can display them.
+
+See `docs/execution.md` for the full design and message-loop details.
 
 ### Interaction modes
 
@@ -82,6 +97,7 @@ picks those tools up on the next call via
 |---|---|---|
 | Direct text | Questions, explanations, planning | Plain text reply |
 | Code execution | Compute, call tools, process data | `<execute>...</execute>` |
+| Bash execution | Shell commands | `<execute>#!BASH\n...</execute>` |
 | Mixed | Explain + compute in one response | Text + `<execute>` block |
 
 The agent ends a task with `<done/>`. For simple questions it just replies directly.
@@ -103,12 +119,15 @@ START → generate ──► execute ──► generate
 ### Public API
 
 ```python
-agent.run(prompt)                              # blocking, returns (log, final_content)
-agent.run_stream(prompt)                       # generator of {"type", "content"} dicts
-agent.run_with_history(prompt, history)        # with prior conversation context
+agent.run(prompt)                                    # blocking, returns (log, final_content)
+agent.run_stream(prompt)                             # generator of {"type", "content"} dicts (legacy)
+agent.run_with_history(prompt, history)              # non-streaming with prior conversation context
+agent.run_with_history_streaming(prompt, history)    # streaming with prior conversation context
 ```
 
 The agent is stateless — history is passed explicitly per call.
+An optional `context_compress_hook` can be passed to `BaseAgent.__init__`
+to trim history when it grows large.
 
 ---
 
@@ -179,7 +198,7 @@ spec = ToolSpec.from_function(
 ### ToolRegistry
 
 The single source of truth. Observable — `on_change(callback)` lets
-subscribers react to additions and removals.
+subscribers react to additions and removals. Thread-safe via `RLock`.
 
 ```python
 registry = ToolRegistry()
@@ -215,7 +234,7 @@ for spec in scanner.scan():
 
 `CAi/CAi_agent/agent.py`
 
-Thin orchestrator (~150 lines). Its job is to:
+Thin orchestrator. Its job is to:
 
 1. Create a `ToolRegistry` and attach a `ReplBridge`
 2. Run a `ModuleScanner` against `CAi.toolkit` to populate the registry
@@ -226,7 +245,8 @@ Thin orchestrator (~150 lines). Its job is to:
 
 All the public methods (`add_tool`, `remove_tool`, `list_tools`,
 `reload_tools`, `list_skills`, `reload_skills`) delegate to the
-appropriate subsystem.
+appropriate subsystem. `launch_web_ui(port, host)` starts the FastAPI
+server directly from the agent instance.
 
 ---
 
@@ -237,14 +257,63 @@ appropriate subsystem.
 ```
 web_ui/
 ├── backend/
-│   ├── app.py                  # FastAPI — chat, files, conversations
-│   └── conversation_store.py   # JSON-based persistence
+│   ├── app.py                  # FastAPI instance + router registration (thin layer)
+│   ├── deps.py                 # Shared singletons + FastAPI Depends() providers
+│   ├── chat_service.py         # Business logic: prompt building, SSE iteration, response cleaning
+│   ├── conversation_store.py   # JSON-based conversation persistence
+│   ├── pdf_export.py           # Conversation → Markdown → PDF
+│   └── routers/
+│       ├── chat.py             # POST /api/chat, POST /api/chat/cancel, GET /api/health
+│       ├── conversations.py    # CRUD for /api/conversations
+│       ├── files.py            # Upload / list / download / delete + PDF export
+│       └── workspace.py        # DELETE /api/workspace, POST /api/reset
 ├── frontend/
 │   ├── index.html
-│   ├── app.js
+│   ├── js/                     # ES modules: main, chat, conversations, files, state
 │   └── styles.css
-└── launch.py                   # uvicorn launcher
+└── launch.py                   # uvicorn launcher + SPA catch-all routing
 ```
+
+### Dependency graph
+
+```
+app.py
+  ├── routers/chat.py        → deps.py, chat_service.py
+  ├── routers/conversations.py → deps.py
+  ├── routers/files.py       → deps.py
+  └── routers/workspace.py   → deps.py
+
+deps.py
+  └── conversation_store.py, repl.set_workspace_dir
+```
+
+`deps.py` owns all mutable singletons (`_agent`, `_store`, `_chat_lock`,
+`_cancel_events`) and exposes them as FastAPI `Depends()` callables so
+each router can declare its needs without importing globals.
+`chat_service.py` holds pure functions with no FastAPI dependency —
+testable without spinning up the app.
+
+See `docs/web_ui_backend.md` for the full design rationale.
+
+### API routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/chat` | Streaming chat (SSE) |
+| `POST` | `/api/chat/cancel` | Cancel running generation |
+| `GET` | `/api/conversations` | List all conversations |
+| `POST` | `/api/conversations` | Create conversation |
+| `GET` | `/api/conversations/{id}` | Get conversation with messages |
+| `DELETE` | `/api/conversations/{id}` | Delete conversation |
+| `PATCH` | `/api/conversations/{id}/title` | Rename conversation |
+| `POST` | `/api/upload` | Upload file to workspace |
+| `GET` | `/api/files` | List workspace files |
+| `GET` | `/api/files/{filename}` | Download file |
+| `DELETE` | `/api/files/{filename}` | Delete file |
+| `DELETE` | `/api/workspace` | Clear workspace files |
+| `POST` | `/api/reset` | Full reset |
+| `POST` | `/api/export-pdf` | Export conversation to PDF |
+| `GET` | `/api/health` | Health check |
 
 ### Chat flow
 
@@ -254,7 +323,7 @@ POST /api/chat
     ├── Acquire _chat_lock (asyncio.Lock) — serialises concurrent requests
     ├── Load conversation history from ConversationStore
     ├── Build prompt (user message + workspace path + file refs)
-    ├── Call agent.run_with_history(prompt, history)
+    ├── Call agent.run_with_history_streaming(prompt, history)
     │       │
     │       └── Streams {"type", "content"} dicts
     │
@@ -267,13 +336,15 @@ POST /api/chat
 | Type | Content |
 |---|---|
 | `conversation_id` | Newly created or existing conversation ID |
-| `thinking` | Agent reasoning text (before any tags) |
-| `code` | Code block from `<execute>` |
+| `token` | Single LLM token/chunk as it arrives |
+| `message_end` | Full message text (complete LLM turn) |
 | `observation` | Code execution output |
-| `text` | Pure text response (no code) |
 | `solution` | Final cleaned response (stored in history) |
 | `done` | Stream complete |
 | `error` | Exception message |
+
+Generation can be interrupted mid-stream via `POST /api/chat/cancel`,
+which sets a per-conversation `asyncio.Event` checked by the SSE loop.
 
 ### Conversation persistence
 
@@ -290,17 +361,25 @@ agent_workspace/
 
 ## Configuration
 
-All user-facing configuration lives in `CAi/config.py`, loaded from `CAi/.env`:
+All user-facing configuration lives in `CAi/config.py`, loaded from environment
+variables (or a `CAi/.env` file):
 
 ```bash
 LLM_MODEL=claude-sonnet-4-5-20250929
+LLM_SOURCE=                        # auto-detect from model name if unset
 LLM_BASE_URL=http://your-endpoint/v1/
 LLM_API_KEY=your_key
+LLM_TEMPERATURE=0.7
 
 TOOL_SERVER_HOST=0.0.0.0
 TOOL_SERVER_PORT=8001
+WEB_BACKEND_HOST=0.0.0.0
 WEB_BACKEND_PORT=8000
 ```
+
+The CLI entry point (`python -m CAi.main`) accepts `--port`, `--model`,
+`--source`, `--base-url`, `--api-key`, and `--temperature` flags that
+override the env-var defaults at startup.
 
 ---
 
@@ -332,6 +411,14 @@ To register a tool without exposing it in the prompt (for skill helpers etc.):
 ```python
 agent.add_tool(helper_fn, hidden=True)
 ```
+
+The built-in toolkit currently ships **10 drug-discovery tools** plus
+**2 hidden skill helpers** (`get_skill_content`, `list_available_skills`):
+
+| Category | Functions |
+|----------|-----------|
+| Evaluation | `calculate_scscore`, `predict_molecule_toxicity`, `predict_antibacterial_pmic`, `perform_molecular_docking_vina` |
+| Generation | `generate_scaffold_analogs`, `generate_libinvent_decorations`, `generate_molecules_for_pocket`, `generate_molecules_reinvent4_denovo`, `generate_molecules_reinvent4_libinvent`, `generate_molecules_reinvent4_mol2mol` |
 
 ## Adding skills
 
@@ -396,23 +483,22 @@ pytest
 ```
 tests/
 ├── conftest.py                 # FakeLLM fixtures, no credentials needed
-├── test_parse_response.py      # BaseAgent message parsing           (11 tests)
-├── test_prompt_builder.py      # PromptBuilder + concrete sections   (17 tests)
-├── test_prompt_building.py     # A1pro prompt integration            (10 tests)
-├── test_tool_spec.py           # ToolSpec.from_function              (12 tests)
-├── test_tool_registry.py       # Registry CRUD + observer            (15 tests)
-├── test_tool_scanner.py        # ModuleScanner discovery             ( 8 tests)
-├── test_repl_bridge.py         # Registry → builtins sync            ( 8 tests)
-├── test_agent_execution.py     # Stateless history, tools, code      (10 tests)
-├── test_execution_repl.py      # Persistent REPL namespace           (13 tests)
-├── test_execution_bash.py      # Bash subprocess wrapper             ( 6 tests)
-├── test_execution_timeout.py   # run_with_timeout / pool safety      ( 6 tests)
-├── test_llm_factory.py         # LLM provider factory                (26 tests)
-├── test_web_concurrency.py     # SSE parsing + chat lock             ( 6 tests)
-├── test_pdf_export.py          # Conversation → Markdown → PDF       (17 tests)
-├── test_toolkit_client.py      # Tool server HTTP client             (14 tests)
-└── test_toolkit_validators.py  # SMILES input validators             ( 8 tests)
-                                  Total: 183 tests, ~1.7s runtime (Linux)
+├── test_parse_response.py      # BaseAgent message parsing
+├── test_prompt_builder.py      # PromptBuilder + concrete sections
+├── test_prompt_building.py     # A1pro prompt integration
+├── test_tool_spec.py           # ToolSpec.from_function
+├── test_tool_registry.py       # Registry CRUD + observer
+├── test_tool_scanner.py        # ModuleScanner discovery
+├── test_repl_bridge.py         # Registry → builtins sync
+├── test_agent_execution.py     # Stateless history, tools, code
+├── test_execution_repl.py      # Persistent REPL namespace
+├── test_execution_bash.py      # Bash subprocess wrapper
+├── test_execution_timeout.py   # run_with_timeout / pool safety
+├── test_llm_factory.py         # LLM provider factory
+├── test_web_concurrency.py     # SSE parsing + chat lock
+├── test_pdf_export.py          # Conversation → Markdown → PDF
+├── test_toolkit_client.py      # Tool server HTTP client
+└── test_toolkit_validators.py  # SMILES input validators
 ```
 
 All tests use a `FakeLLM` stub that returns scripted responses — no

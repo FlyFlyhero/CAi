@@ -166,7 +166,7 @@ RULES:
                     result = run_with_timeout(run_bash_script, [script], timeout=self.timeout_seconds)
                 else:
                     self._inject_functions_to_repl()
-                    result = run_with_timeout(run_python_repl, [code], timeout=self.timeout_seconds)
+                    result = run_python_repl(code, timeout=self.timeout_seconds)
                 results.append(result)
 
         combined = "\n".join(results)

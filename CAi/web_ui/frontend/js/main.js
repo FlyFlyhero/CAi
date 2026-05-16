@@ -2,13 +2,28 @@
  * Application entry point.
  * Initializes DOM refs, binds events, and kicks off data loading.
  */
-import { $, state, dom, initDomRefs, safeCreateIcons, initTheme, toggleTheme, updateSendBtnState } from "./state.js";
-import { sendMessage, cancelGeneration } from "./chat.js";
-import { loadFiles, handleSidebarUpload, handleChatFileAttach, exportPdf, clearFiles, closeAllModals } from "./files.js";
-import { loadConversations, startNewConversation } from "./conversations.js";
+import { $, state, dom, initDomRefs, safeCreateIcons, initTheme, toggleTheme, updateSendBtnState } from "./state.js?v=5";
+import { sendMessage, cancelGeneration } from "./chat.js?v=5";
+import { loadFiles, handleSidebarUpload, handleChatFileAttach, exportPdf, clearFiles, closeAllModals } from "./files.js?v=5";
+import { loadConversations, startNewConversation } from "./conversations.js?v=5";
 
 // Initialize theme immediately (before DOMContentLoaded) to avoid flash
 initTheme();
+
+// Configure marked to use highlight.js for fenced code blocks
+(function configureMarked() {
+    try {
+        if (typeof marked !== "undefined" && typeof hljs !== "undefined") {
+            marked.setOptions({
+                highlight(code, lang) {
+                    const language = hljs.getLanguage(lang) ? lang : "plaintext";
+                    return hljs.highlight(code, { language }).value;
+                },
+                langPrefix: "hljs language-",
+            });
+        }
+    } catch (_) { /* CDN not yet loaded; safeHighlight will handle post-render */ }
+})();
 
 // ========== Boot ==========
 document.addEventListener("DOMContentLoaded", async () => {

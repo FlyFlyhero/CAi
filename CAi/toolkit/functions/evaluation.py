@@ -12,6 +12,7 @@ import os
 
 from ..client import run_tool
 
+from .._validators import pdb_to_pdbqt_check
 
 def calculate_scscore(
     smiles: str | None = None,
@@ -149,6 +150,12 @@ def perform_molecular_docking_vina(
     Returns:
         JSON string. More negative scores indicate stronger predicted binding.
     """
+    # add pdb file check 
+    if err := pdb_to_pdbqt_check(input_pdb_file, output_pdbqt_file):
+        print(json.dumps({"error": err}, ensure_ascii=False))
+    else:
+        print(json.dumps({"success": f"pdbqt 文件生成成功: {output_pdbqt_file}"}, ensure_ascii=False))
+        
     payload = {
         "receptor_file": receptor_pdbqt_path,
         "ligand_file": ligand_pdbqt_path,
