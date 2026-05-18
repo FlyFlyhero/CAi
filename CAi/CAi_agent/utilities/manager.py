@@ -26,9 +26,9 @@ logger = logging.getLogger("CAi.utilities.manager")
 # ---------------------------------------------------------------------------
 
 MAINTAIN_PROMPT_TEMPLATE = """\
-You are a utility library curator for a Python coding agent. Your job is to \
-review a recent agent session and decide whether the executed code reveals \
-reusable patterns worth saving as utility functions.
+You are an expert Lead Developer and Curator for a Computational Chemistry and Drug Discovery AI Agent. \
+Your job is to review a recent agent session and decide whether the executed code reveals \
+reusable data-processing, algorithmic, or cheminformatics patterns worth saving as utility functions.
 
 You have FULL CONTEXT of the session:
 - The user's original task (the WHY)
@@ -37,11 +37,12 @@ You have FULL CONTEXT of the session:
 - The agent's interpretation of results
 - The agent's final summary
 
-Use this context to judge whether code is a one-off hack or a generalizable pattern.
+Use this context to judge whether code is a one-off hack or a highly generalizable pattern.
 
 ## Current Utility Library
 
 {library}
+
 {user_request}
 ## Code Executions in This Session
 
@@ -53,47 +54,48 @@ Use this context to judge whether code is a one-off hack or a generalizable patt
 Analyze the session above and decide what actions to take:
 
 1. **SAVE**: If you see a useful, reusable pattern that is NOT already in the \
-library AND is broadly applicable (not specific to this user's data), create a \
-new utility function. Do NOT copy code verbatim — rewrite it into a generalized, \
-well-documented function with:
-   - Type hints on all parameters and return value
-   - A docstring with a one-line summary and a "Use when:" line
-   - Input validation where appropriate
-   - Self-contained imports (at top of function or file level)
+library AND is broadly applicable (e.g., custom clustering, RDKit molecule filtering, \
+complex data deduplication, MaxMin diversity selection), create a new utility function. \
+Do NOT copy code verbatim — rewrite it into a generalized, robust, production-ready function with:
+   - Type hints on all parameters and return value (e.g., `smiles_list: list[str]`).
+   - A docstring with a one-line summary and a "Use when:" line.
+   - Self-contained imports strictly inside the function body or at the top of the code string.
 
-   Skip SAVE if:
-   - The code is a one-off hack tied to specific files/IDs/molecule names
-   - The code failed or produced errors
-   - An existing utility already covers this pattern
-   - The pattern is too trivial (single-line wrappers, simple prints)
+   **Skip SAVE if:**
+   - The code is a one-off hack tied to specific specific SMILES, file paths, or molecule names.
+   - The code failed, produced errors, or relies on undefined variables.
+   - An existing utility already covers this pattern.
+   - The pattern is too trivial (e.g., mere wrappers around existing `CAi.toolkit` tools or simple print loops).
 
 2. **UPDATE**: If an existing utility could be improved based on observed \
-usage (better error handling, more general interface, bug fix), update it.
+usage (e.g., adding error handling for RDKit NoneType returns, making interface more general, fixing a bug), update it.
 
-3. **DELETE**: If a utility has a poor success rate (success_count/call_count < 0.5 \
-over 10+ calls) or has never been used (call_count == 0 for a long time), \
-consider deleting it.
+3. **DELETE**: If a utility has a poor success rate (success_count/call_count < 0.5) \
+or has never been used (call_count == 0 for a long time), consider deleting it.
 
 ## Response Format
 
 Return a JSON array of actions. Each action is an object with:
 - "type": "save" | "update" | "delete"
-- "name": function name (snake_case, no spaces)
+- "name": function name (snake_case, no spaces, domain-appropriate)
 - "description": one-line description (for save/update)
 - "code": complete Python function code (for save/update)
 - "reasoning": brief explanation of WHY you took this action (1-2 sentences)
 
 If no actions are needed, return an empty array: []
 
+**CRITICAL JSON REQUIREMENT**: The "code" field must be a valid JSON string. \
+You MUST properly escape all newlines as `\\n` and escape all internal double quotes as `\\"`.
+
 Example:
 ```json
 [
   {{
     "type": "save",
-    "name": "parse_sdf_file",
-    "description": "Parse an SDF file and return a list of molecule dicts.",
-    "reasoning": "The agent wrote SDF parsing logic three times across blocks. This pattern recurs in molecule analysis tasks.",
-    "code": "import re\\nfrom pathlib import Path\\n\\ndef parse_sdf_file(path: str) -> list[dict]:\\n    \\"\\"\\"Parse an SDF file into molecule records.\\n\\n    Use when: you need to read molecular data from .sdf files.\\n    \\"\\"\\"\\n    ..."
+    "name": "canonicalize_and_deduplicate",
+    "description": "Canonicalize a list of SMILES using RDKit and remove duplicates/invalid molecules.",
+    "reasoning": "The agent manually wrote an RDKit canonicalization loop to clean generated molecules. This is universally useful.",
+    "code": "from rdkit import Chem\\n\\ndef canonicalize_and_deduplicate(smiles_list: list[str]) -> list[str]:\\n    \\"\\"\\"Clean and deduplicate SMILES.\\n\\n    Use when: processing raw output from generation models.\\n    \\"\\"\\"\\n    unique = set()\\n    for s in smiles_list:\\n        mol = Chem.MolFromSmiles(s)\\n        if mol:\\n            unique.add(Chem.MolToSmiles(mol, isomericSmiles=True))\\n    return list(unique)"
   }},
   {{
     "type": "delete",
