@@ -14,14 +14,20 @@ CAi is an AI agent platform for drug discovery workflows. It combines a lightwei
 - Mixed interaction — the agent can answer questions directly, execute code, or do both in one response
 - Lean system prompt (~1,700 tokens) — only the tools you actually use
 - Skills (SOPs) — pre-validated workflows loaded on demand, not baked into every prompt
-- Clean two-layer architecture — `BaseAgent` handles execution, `A1pro` adds domain tools
+- Self-learning utilities — the agent accumulates reusable functions from execution experience, curated by an independent LLM-based manager
+- Clean layered architecture — `BaseAgent` handles execution, `A1pro` wires together tools, skills, utilities, and prompt
 
 ## Architecture
 
 ```
 BaseAgent  (core: LangGraph + LLM + REPL)
-    └── A1pro  (domain: tools + skills + system prompt)
-              └── Web UI  (FastAPI + static frontend)
+    └── A1pro  (orchestrator)
+              ├── execution/   (Jupyter kernel REPL + bash + timeout)
+              ├── prompt/      (PromptBuilder + composable sections)
+              ├── tools/       (ToolRegistry + ReplBridge + ModuleScanner)
+              ├── utilities/   (self-learning code reuse library)
+              ├── skills/      (SOP Markdown files)
+              └── web_ui/      (FastAPI + static frontend)
 ```
 
 See [docs/architecture.md](docs/architecture.md) for full details.
@@ -137,11 +143,15 @@ CAi_copilot/
 │   ├── CAi_agent/
 │   │   ├── base.py                  # BaseAgent — LangGraph + LLM + REPL
 │   │   ├── agent.py                 # A1pro — orchestrator
-│   │   ├── prompt/                  # PromptBuilder + sections
+│   │   ├── llm.py                   # LLM factory (Anthropic/OpenAI/DeepSeek/Custom)
+│   │   ├── prompt/                  # PromptBuilder + composable sections
 │   │   ├── tools/                   # ToolRegistry + Scanner + ReplBridge
+│   │   ├── utilities/               # Self-learning code reuse library
+│   │   ├── execution/               # Jupyter kernel REPL + bash + timeout
 │   │   └── skills/                  # SOP Markdown files
 │   ├── toolkit/                     # Agent-facing drug discovery tools
 │   │   ├── client.py                # HTTP client for the tool server
+│   │   ├── _validators.py           # SMILES & pocket input validators
 │   │   ├── skill_helpers.py         # get_skill_content / list_available_skills
 │   │   ├── functions/
 │   │   │   ├── generation.py        # 6 molecule generators
@@ -153,6 +163,9 @@ CAi_copilot/
 │       │   ├── conversation_store.py
 │       │   └── pdf_export.py        # Conversation → Markdown → PDF
 │       └── frontend/                # Static HTML/JS/CSS
+├── agent_workspace/
+│   └── _utilities/                  # Persisted utility functions (.py files)
+├── tests/                           # Pytest suite (no API keys needed)
 └── docs/
     └── architecture.md              # Detailed architecture documentation
 ```
@@ -192,19 +205,24 @@ Agent receives result
 ### Add a tool
 
 1. Add a function to `CAi/toolkit/functions/generation.py` or `evaluation.py`
-2. Re-export it from `CAi/toolkit/__init__.py` (and `functions/__init__.py`)
-3. Restart or call `agent.reload_tools()`
+2. Add input validation using validators from `CAi/toolkit/_validators.py` (e.g. `valid_complete_molecule_smiles`, `require_attachment_point`)
+3. Re-export it from `CAi/toolkit/__init__.py` (and `functions/__init__.py`)
+4. Restart or call `agent.reload_tools()`
 
 ```python
-def my_tool(smiles: str) -> str:
+from CAi.toolkit._validators import valid_complete_molecule_smiles
+
+def my_tool(smiles: str) -> dict:
     """One-line description shown in the agent's tool catalog."""
+    if err := valid_complete_molecule_smiles(smiles):
+        return {"success": False, "error": err}
     ...
 ```
 
 ### Add a skill (SOP)
 
-Create `CAi/CAi_agent/skills/my_workflow.md`. The filename becomes the skill ID.
-See [docs/architecture.md](docs/architecture.md#adding-skills) for the Markdown format.
+Create `CAi/CAi_agent/skills/my_workflow.md` with `## Description` and `## Metadata` sections. The filename becomes the skill ID.
+See [docs/architecture.md](docs/architecture.md#adding-skills) for the full Markdown format.
 
 See [CAi/start.md](CAi/start.md) for the full development guide.
 

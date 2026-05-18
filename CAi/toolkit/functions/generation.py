@@ -8,7 +8,12 @@ for the agent to easily parse.
 
 from __future__ import annotations
 
-from .._validators import non_empty_smiles, reject_chiral, require_attachment_point
+from .._validators import (
+    reject_chiral,
+    require_attachment_point,
+    require_pocket_definition,
+    valid_complete_molecule_smiles,
+)
 from ..client import run_tool
 
 
@@ -41,6 +46,8 @@ def generate_scaffold_analogs(smiles: str, num_analogs: int = 10) -> dict:
           {"success": False, "error": str}
     """
     if err := require_attachment_point(smiles):
+        return {"success": False, "error": err}
+    if err := reject_chiral(smiles):
         return {"success": False, "error": err}
 
     result = run_tool("scaffold", {"smiles": smiles, "num_analogs": num_analogs})
@@ -146,11 +153,8 @@ def generate_molecules_for_pocket(
         On error:
           {"success": False, "error": str}
     """
-    if not center_xyz and not ref_ligand_path:
-        return {
-            "success": False,
-            "error": "Provide either center_xyz or ref_ligand_path to define the pocket.",
-        }
+    if err := require_pocket_definition(protein_pdb_path, center_xyz, ref_ligand_path):
+        return {"success": False, "error": err}
 
     payload: dict = {
         "protein_pdb_path": protein_pdb_path,
@@ -244,6 +248,8 @@ def generate_molecules_reinvent4_libinvent(smiles: str, num_variants: int = 50) 
     """
     if err := require_attachment_point(smiles):
         return {"success": False, "error": err}
+    if err := reject_chiral(smiles):
+        return {"success": False, "error": err}
 
     result = run_tool(
         "reinvent4",
@@ -301,7 +307,7 @@ def generate_molecules_reinvent4_mol2mol(
         On error:
           {"success": False, "error": str}
     """
-    if err := non_empty_smiles(smiles):
+    if err := valid_complete_molecule_smiles(smiles):
         return {"success": False, "error": err}
 
     payload = {

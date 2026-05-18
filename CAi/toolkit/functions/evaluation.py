@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import os
 
+from .._validators import valid_center_xyz, valid_complete_molecule_smiles, valid_existing_file
 from ..client import run_tool
 
 
@@ -92,6 +93,9 @@ def predict_molecule_toxicity(smiles: str) -> dict:
         On error:
           {"success": False, "error": str}
     """
+    if err := valid_complete_molecule_smiles(smiles):
+        return {"success": False, "error": err}
+
     result = run_tool("toxicity", {"smiles": smiles})
     if result.get("error"):
         return {"success": False, "error": result["error"]}
@@ -145,6 +149,9 @@ def predict_antibacterial_pmic(smiles: str) -> dict:
         On error:
           {"success": False, "error": str}
     """
+    if err := valid_complete_molecule_smiles(smiles):
+        return {"success": False, "error": err}
+
     result = run_tool("pmic", {"smiles": smiles})
     if result.get("error"):
         return {"success": False, "error": result["error"]}
@@ -197,6 +204,13 @@ def perform_molecular_docking_vina(
         On error:
           {"success": False, "error": str}
     """
+    if err := valid_existing_file(receptor_pdbqt_path, field_name="receptor_pdbqt_path"):
+        return {"success": False, "error": err}
+    if err := valid_existing_file(ligand_pdbqt_path, field_name="ligand_pdbqt_path"):
+        return {"success": False, "error": err}
+    if err := valid_center_xyz(center_xyz):
+        return {"success": False, "error": err}
+
     payload = {
         "receptor_file": receptor_pdbqt_path,
         "ligand_file": ligand_pdbqt_path,

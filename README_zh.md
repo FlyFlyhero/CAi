@@ -14,14 +14,20 @@ CAi 是一个面向药物发现工作流的 AI Agent 平台，将轻量级 LangG
 - 混合交互模式 — Agent 可以直接回答问题、执行代码，或在同一回复中两者兼顾
 - 精简系统提示词（约 1,700 tokens）— 只包含你实际使用的工具
 - Skills（SOP）— 预验证的工作流按需加载，不占用每次对话的上下文
-- 清晰的双层架构 — `BaseAgent` 负责执行，`A1pro` 添加领域工具
+- 自主学习工具库（Utilities）— Agent 从执行经验中积累可复用函数，由独立的 LLM 管理器负责维护
+- 清晰的分层架构 — `BaseAgent` 负责执行，`A1pro` 将工具、技能、工具库和提示词串联起来
 
 ## 架构
 
 ```
 BaseAgent  （核心：LangGraph + LLM + REPL）
-    └── A1pro  （领域：工具 + 技能 + 系统提示词）
-              └── Web UI  （FastAPI + 静态前端）
+    └── A1pro  （编排层）
+              ├── execution/   （Jupyter kernel REPL + bash + timeout）
+              ├── prompt/      （PromptBuilder + 可组合的 Section）
+              ├── tools/       （ToolRegistry + ReplBridge + ModuleScanner）
+              ├── utilities/   （自主学习代码复用库）
+              ├── skills/      （SOP Markdown 文件）
+              └── web_ui/      （FastAPI + 静态前端）
 ```
 
 详细架构说明见 [docs/architecture.md](docs/architecture.md)。
@@ -138,11 +144,15 @@ CAi_copilot/
 │   ├── CAi_agent/
 │   │   ├── base.py                  # BaseAgent — LangGraph + LLM + REPL
 │   │   ├── agent.py                 # A1pro — 编排层
-│   │   ├── prompt/                  # PromptBuilder + 各 Section
+│   │   ├── llm.py                   # LLM 工厂（Anthropic/OpenAI/DeepSeek/Custom）
+│   │   ├── prompt/                  # PromptBuilder + 可组合的 Section
 │   │   ├── tools/                   # ToolRegistry + Scanner + ReplBridge
+│   │   ├── utilities/               # 自主学习代码复用库
+│   │   ├── execution/               # Jupyter kernel REPL + bash + timeout
 │   │   └── skills/                  # SOP Markdown 文件
 │   ├── toolkit/                     # 面向 Agent 的药物发现工具集
 │   │   ├── client.py                # 工具服务端 HTTP 客户端
+│   │   ├── _validators.py           # SMILES 与口袋输入校验器
 │   │   ├── skill_helpers.py         # get_skill_content / list_available_skills
 │   │   ├── functions/
 │   │   │   ├── generation.py        # 6 个分子生成工具
@@ -154,6 +164,9 @@ CAi_copilot/
 │       │   ├── conversation_store.py
 │       │   └── pdf_export.py        # 对话 → Markdown → PDF
 │       └── frontend/                # 静态 HTML/JS/CSS
+├── agent_workspace/
+│   └── _utilities/                  # 持久化的工具函数（.py 文件）
+├── tests/                           # Pytest 测试套件（无需 API key）
 └── docs/
     └── architecture.md              # 详细架构文档
 ```
@@ -193,18 +206,23 @@ Agent 接收结果
 ### 添加工具
 
 1. 在 `CAi/toolkit/functions/generation.py` 或 `evaluation.py` 中添加函数
-2. 在 `CAi/toolkit/__init__.py` 和 `functions/__init__.py` 中导出
-3. 重启 Agent 或调用 `agent.reload_tools()`
+2. 使用 `CAi/toolkit/_validators.py` 中的校验器进行输入验证（如 `valid_complete_molecule_smiles`、`require_attachment_point`）
+3. 在 `CAi/toolkit/__init__.py` 和 `functions/__init__.py` 中导出
+4. 重启 Agent 或调用 `agent.reload_tools()`
 
 ```python
-def my_tool(smiles: str) -> str:
+from CAi.toolkit._validators import valid_complete_molecule_smiles
+
+def my_tool(smiles: str) -> dict:
     """一句话描述，会显示在 Agent 的工具目录中。"""
+    if err := valid_complete_molecule_smiles(smiles):
+        return {"success": False, "error": err}
     ...
 ```
 
 ### 添加技能（SOP）
 
-在 `CAi/CAi_agent/skills/` 下创建 Markdown 文件，文件名即为技能 ID。
+在 `CAi/CAi_agent/skills/` 下创建包含 `## Description` 和 `## Metadata` 章节的 Markdown 文件，文件名即为技能 ID。
 格式说明见 [docs/architecture.md](docs/architecture.md#adding-skills)。
 
 完整开发指南见 [CAi/start.md](CAi/start.md)。
