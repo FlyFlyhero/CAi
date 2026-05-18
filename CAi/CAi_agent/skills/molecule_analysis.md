@@ -7,7 +7,7 @@ Perform comprehensive property analysis and evaluation of a given molecule, incl
 ## Metadata
 
 **Category**: Molecular Analysis
-**Required Tools**: rdkit, calculate_scscore, predict_admet, mol_to_image
+**Required Tools**: rdkit, calculate_scscore
 **Difficulty**: Easy
 **Use Cases**: Candidate compound evaluation, Molecular property verification, Medicinal chemistry assessment
 
@@ -92,16 +92,10 @@ hba = Descriptors.NumHAcceptors(mol)
 lipinski_pass = (mw <= 500 and logp <= 5 and hbd <= 5 and hba <= 10)
 print(f"Lipinski's Rule: {'Pass' if lipinski_pass else 'Fail'}")
 
-# 4. Predict ADMET
-result = predict_admet(smiles)
-print(result)
-
-# 5. Assess synthetic accessibility
+# 4. Assess synthetic accessibility
 scscore = calculate_scscore(smiles)
 print(f"SCScore: {scscore:.2f}")
 
-# 6. Generate image
-img = mol_to_image(smiles)
 ```
 
 **Expected Output**:

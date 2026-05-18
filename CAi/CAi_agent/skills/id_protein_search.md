@@ -6,7 +6,7 @@ Use this skill when the user wants to work with a target protein structure but h
 ## Metadata
 
 **Category**: Structure Retrieval
-**Required Tools**: fetch_pdb_structure
+**Required Tools**: None
 **Difficulty**: Easy
 **Use Cases**: Target preparation for docking, Protein structure retrieval, Structure-based workflow setup
 

@@ -5,7 +5,7 @@ This is a master skill for end-to-end molecular generation, property evaluation,
 
 ## Metadata
 * **Category**: Generative Chemistry & Drug Discovery
-* **Required Tools**: `rdkit`, `generate_scaffold_analogs`, `generate_libinvent_decorations`, `generate_molecules_reinvent4_libinvent`, `generate_molecules_reinvent4_mol2mol`, `perform_molecular_docking_vina`, `calculate_scscore`, `predict_antibacterial_pmic`, `predict_molecule_toxicity`
+* **Required Tools**: rdkit, generate_scaffold_analogs, generate_libinvent_decorations, generate_molecules_reinvent4_libinvent, generate_molecules_reinvent4_mol2mol, perform_molecular_docking_vina, calculate_scscore, predict_antibacterial_pmic, predict_molecule_toxicity
 * **Difficulty**: Expert / Autonomous
 
 ---
