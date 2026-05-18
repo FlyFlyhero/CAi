@@ -45,6 +45,9 @@ _utilities_injected: bool = False
 # Cache of injected utility names (for re-injection on kernel restart).
 _injected_utility_names: list[str] = []
 
+# Cache of injected utility function objects (for re-injection on kernel restart).
+_injected_utilities: dict[str, Callable] = {}
+
 
 def _accumulate_utility_usage(kernel_usage: dict) -> None:
     """Merge kernel-reported usage into parent-side accumulator."""
@@ -71,9 +74,12 @@ def inject_utilities_with_monitoring(utilities: dict[str, Callable]) -> None:
     2. Inject monitoring bootstrap (_utility_usage dict + _monitor_utility decorator)
     3. Wrap each function with _monitor_utility in kernel
     """
-    global _utilities_injected, _injected_utility_names
+    global _utilities_injected, _injected_utility_names, _injected_utilities
     if not utilities:
         return
+
+    # Store for re-injection on kernel restart.
+    _injected_utilities = dict(utilities)
 
     # Step 1: inject raw functions directly into kernel (bypass builtins registry)
     _inject_into_kernel(utilities)
@@ -107,16 +113,23 @@ def inject_utilities_with_monitoring(utilities: dict[str, Callable]) -> None:
 
 
 def _reinject_monitoring_bootstrap() -> None:
-    """Re-inject monitoring bootstrap after kernel restart.
+    """Re-inject monitoring bootstrap and utilities after kernel restart.
 
-    The utilities themselves are re-synced via _sync_builtins_to_kernel,
-    so we only need to re-inject the monitoring infrastructure and re-wrap.
+    Utilities are injected directly into the kernel (not via builtins
+    registry), so they must be explicitly re-injected here. Toolkit tools
+    are handled separately by _sync_builtins_to_kernel on each execution.
     """
     global _utilities_injected
     if not _utilities_injected or not _injected_utility_names:
         return
 
     kc = _get_or_start_kernel()
+
+    # Step 1: re-inject raw utility functions (they were lost on restart).
+    if _injected_utilities:
+        _inject_into_kernel(_injected_utilities)
+
+    # Step 2: inject monitoring infrastructure.
     bootstrap = (
         "import functools as _functools\n"
         "_utility_usage = {}\n"
@@ -134,11 +147,11 @@ def _reinject_monitoring_bootstrap() -> None:
     )
     _execute_in_kernel(kc, bootstrap, timeout=10)
 
-    # Re-wrap utilities (they'll have been re-injected by _sync_builtins_to_kernel)
+    # Step 3: re-wrap each utility with the monitor.
     for name in _injected_utility_names:
         _execute_in_kernel(
             kc,
-            f"if '{name}' in dir(): {name} = _monitor_utility({name}, {name!r})",
+            f"{name} = _monitor_utility({name}, {name!r})",
             timeout=5,
         )
 
