@@ -1,8 +1,16 @@
-# Skill: Target-Based De Novo Molecular Design with Vina Ranking
+# Target-Based De Novo Molecular Design with Vina Ranking
 
-## Purpose
-Use this skill when the user wants to generate novel small molecules for a target protein and evaluate them by binding affinity.  
-This workflow is designed for target-aware de novo molecular generation using a protein structure file and a binding pocket definition, followed by Vina-based docking evaluation and optional extra property assessment.
+## Description
+Use this skill when the user wants to generate novel small molecules for a target protein and evaluate them by binding affinity. This workflow is designed for target-aware de novo molecular generation using a protein structure file and a binding pocket definition, followed by Vina-based docking evaluation and optional extra property assessment.
+
+## Metadata
+
+**Category**: Structure-Based Design
+**Required Tools**: generate_molecules_for_pocket, perform_molecular_docking_vina, calculate_scscore, predict_molecule_toxicity, predict_antibacterial_pmic
+**Difficulty**: Hard
+**Use Cases**: Target-based de novo design, Structure-based drug discovery, Binding affinity optimization
+
+---
 
 ## When to use
 Use this skill when:
@@ -34,7 +42,7 @@ If the user requests extra evaluation standards, compute them after Vina docking
 These extra metrics should be added only when the user explicitly asks for them, or when the user clearly requests multi-objective screening.
 
 ## Ranking rule
-- If the user specifies ranking criteria, follow the user’s requested metrics and ordering logic.
+- If the user specifies ranking criteria, follow the user's requested metrics and ordering logic.
 - If the user does not specify any extra criteria, rank by Vina score only.
 - If multiple metrics are requested, keep Vina score as the primary affinity indicator unless the user explicitly overrides the ranking priority.
 

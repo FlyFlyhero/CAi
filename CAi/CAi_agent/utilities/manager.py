@@ -3,6 +3,9 @@
 Reviews session execution logs and uses an LLM to decide whether to
 SAVE new utilities, UPDATE existing ones, or DELETE underperforming ones.
 Does not inherit BaseAgent — makes a single LLM call per maintenance cycle.
+
+Every maintain()/preview() call writes a JSON trace to
+`agent_workspace/_utilities/_traces/` for debugging and prompt tuning.
 """
 
 from __future__ import annotations
@@ -10,6 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
+from pathlib import Path
 
 from .registry import UtilityRegistry
 
@@ -22,30 +27,48 @@ logger = logging.getLogger("CAi.utilities.manager")
 
 MAINTAIN_PROMPT_TEMPLATE = """\
 You are a utility library curator for a Python coding agent. Your job is to \
-review recent code executions and maintain a reusable function library.
+review a recent agent session and decide whether the executed code reveals \
+reusable patterns worth saving as utility functions.
+
+You have FULL CONTEXT of the session:
+- The user's original task (the WHY)
+- The agent's reasoning before each code block
+- The actual code and its output
+- The agent's interpretation of results
+- The agent's final summary
+
+Use this context to judge whether code is a one-off hack or a generalizable pattern.
 
 ## Current Utility Library
 
 {library}
-
-## Recent Code Executions
+{user_request}
+## Code Executions in This Session
 
 {executions}
+{final_summary}
 
 ## Instructions
 
-Analyze the code executions above and decide what actions to take:
+Analyze the session above and decide what actions to take:
 
 1. **SAVE**: If you see a useful, reusable pattern that is NOT already in the \
-library, create a new utility function. Do NOT copy code verbatim — rewrite it \
-into a generalized, well-documented function with:
+library AND is broadly applicable (not specific to this user's data), create a \
+new utility function. Do NOT copy code verbatim — rewrite it into a generalized, \
+well-documented function with:
    - Type hints on all parameters and return value
    - A docstring with a one-line summary and a "Use when:" line
    - Input validation where appropriate
    - Self-contained imports (at top of function or file level)
 
-2. **UPDATE**: If an existing utility could be improved based on new usage \
-patterns (better error handling, more general interface, bug fix), update it.
+   Skip SAVE if:
+   - The code is a one-off hack tied to specific files/IDs/molecule names
+   - The code failed or produced errors
+   - An existing utility already covers this pattern
+   - The pattern is too trivial (single-line wrappers, simple prints)
+
+2. **UPDATE**: If an existing utility could be improved based on observed \
+usage (better error handling, more general interface, bug fix), update it.
 
 3. **DELETE**: If a utility has a poor success rate (success_count/call_count < 0.5 \
 over 10+ calls) or has never been used (call_count == 0 for a long time), \
@@ -58,6 +81,7 @@ Return a JSON array of actions. Each action is an object with:
 - "name": function name (snake_case, no spaces)
 - "description": one-line description (for save/update)
 - "code": complete Python function code (for save/update)
+- "reasoning": brief explanation of WHY you took this action (1-2 sentences)
 
 If no actions are needed, return an empty array: []
 
@@ -68,11 +92,13 @@ Example:
     "type": "save",
     "name": "parse_sdf_file",
     "description": "Parse an SDF file and return a list of molecule dicts.",
+    "reasoning": "The agent wrote SDF parsing logic three times across blocks. This pattern recurs in molecule analysis tasks.",
     "code": "import re\\nfrom pathlib import Path\\n\\ndef parse_sdf_file(path: str) -> list[dict]:\\n    \\"\\"\\"Parse an SDF file into molecule records.\\n\\n    Use when: you need to read molecular data from .sdf files.\\n    \\"\\"\\"\\n    ..."
   }},
   {{
     "type": "delete",
-    "name": "old_unused_helper"
+    "name": "old_unused_helper",
+    "reasoning": "0 calls in last 20 sessions, superseded by parse_sdf_file."
   }}
 ]
 ```
@@ -86,103 +112,247 @@ class UtilityManager:
 
     Accepts a pre-configured LLM instance (reuses the agent's LLM by default).
     All failures are caught and logged without affecting the main agent.
+
+    Trace logging:
+        Every maintain() / preview() call writes a JSON trace file to
+        `<utilities_dir>/_traces/` capturing the full prompt, raw LLM
+        response, parsed actions, and any errors. Use `inspect_traces.py`
+        or `UtilityManager.list_traces()` to review them.
     """
 
     def __init__(self, registry: UtilityRegistry, llm=None):
         self._registry = registry
         self._llm = llm
+        # Trace dir lives next to the utilities so they're easy to find.
+        self._trace_dir = registry._dir / "_traces"
+        self._trace_dir.mkdir(parents=True, exist_ok=True)
 
-    def maintain(self, session_log: list[dict]) -> dict[str, list[str]]:
+    def maintain(
+        self,
+        session_log: list[dict],
+        user_message: str | None = None,
+    ) -> dict[str, list[str]]:
         """Review session executions and update utility library.
 
         Args:
             session_log: list of {"type": "message_end"|"observation", "content": str}
+            user_message: the user's original task description (optional but
+                          highly recommended — it tells the curator WHY code
+                          was written, not just WHAT was written).
 
         Returns:
             {"saved": [...], "updated": [...], "deleted": [...]}
         """
+        trace = _new_trace("maintain")
+        trace["user_message"] = user_message
         try:
             if self._llm is None:
+                trace["status"] = "skipped"
+                trace["reason"] = "no LLM configured"
                 logger.debug("UtilityManager: no LLM configured, skipping.")
                 return {"saved": [], "updated": [], "deleted": []}
 
-            code_blocks = self._extract_executions(session_log)
-            if not code_blocks:
+            session_summary = self._extract_session(session_log)
+            trace["code_blocks_extracted"] = len(session_summary["blocks"])
+            trace["session_summary"] = session_summary
+            if not session_summary["blocks"]:
+                trace["status"] = "skipped"
+                trace["reason"] = "no code blocks"
                 return {"saved": [], "updated": [], "deleted": []}
 
-            prompt = self._build_maintain_prompt(code_blocks)
+            prompt = self._build_maintain_prompt(session_summary, user_message)
+            trace["prompt"] = prompt
+            trace["library_before"] = self._registry.list_meta()
+
             response = self._llm.invoke(prompt)
             content = response.content if hasattr(response, "content") else str(response)
+            trace["raw_response"] = content
+
             actions = self._parse_actions(content)
-            return self._apply_actions(actions)
+            trace["parsed_actions"] = actions
+
+            result = self._apply_actions(actions)
+            trace["applied_result"] = result
+            trace["library_after"] = self._registry.list_meta()
+            trace["status"] = "ok"
+            return result
         except Exception as e:
+            trace["status"] = "error"
+            trace["error"] = str(e)
             logger.error("UtilityManager maintenance failed: %s", e)
             return {"saved": [], "updated": [], "deleted": []}
+        finally:
+            self._save_trace(trace)
 
-    def preview(self, session_log: list[dict]) -> list[dict]:
+    def preview(
+        self,
+        session_log: list[dict],
+        user_message: str | None = None,
+    ) -> list[dict]:
         """Analyze session and return proposed actions WITHOUT applying them.
+
+        Args:
+            session_log: list of {"type": "message_end"|"observation", "content": str}
+            user_message: the user's original task description (optional).
 
         Returns:
             List of action dicts: [{"type": "save"|"update"|"delete", "name": ..., ...}]
         """
+        trace = _new_trace("preview")
+        trace["user_message"] = user_message
         try:
             if self._llm is None:
+                trace["status"] = "skipped"
+                trace["reason"] = "no LLM configured"
                 return []
 
-            code_blocks = self._extract_executions(session_log)
-            if not code_blocks:
+            session_summary = self._extract_session(session_log)
+            trace["code_blocks_extracted"] = len(session_summary["blocks"])
+            trace["session_summary"] = session_summary
+            if not session_summary["blocks"]:
+                trace["status"] = "skipped"
+                trace["reason"] = "no code blocks"
                 return []
 
-            prompt = self._build_maintain_prompt(code_blocks)
+            prompt = self._build_maintain_prompt(session_summary, user_message)
+            trace["prompt"] = prompt
+            trace["library_before"] = self._registry.list_meta()
+
             response = self._llm.invoke(prompt)
             content = response.content if hasattr(response, "content") else str(response)
-            return self._parse_actions(content)
+            trace["raw_response"] = content
+
+            actions = self._parse_actions(content)
+            trace["parsed_actions"] = actions
+            trace["status"] = "ok"
+            return actions
         except Exception as e:
+            trace["status"] = "error"
+            trace["error"] = str(e)
             logger.error("UtilityManager preview failed: %s", e)
             return []
+        finally:
+            self._save_trace(trace)
 
-    def _extract_executions(self, session_log: list[dict]) -> list[dict]:
-        """Extract paired code + observation from session log.
+    def _extract_session(self, session_log: list[dict]) -> dict:
+        """Extract a structured summary of the session for the curator.
+
+        Captures not just code + observations, but also the agent's
+        reasoning text BEFORE each code block (the "why") and any final
+        summary text AFTER all code (the "what was concluded").
 
         Skips bash blocks (those starting with #!BASH).
-        Pairs each <execute> block with the next observation in the log.
+
+        Returns:
+            {
+                "blocks": [
+                    {
+                        "reasoning": str,  # text before <execute> in the same message
+                        "code": str,
+                        "output": str,
+                        "outcome": str,    # text after </execute> in the same message
+                    },
+                    ...
+                ],
+                "final_summary": str,  # last text-only message after all code
+            }
         """
         blocks: list[dict] = []
-        for i, step in enumerate(session_log):
-            if step.get("type") == "message_end":
-                content = step.get("content", "")
-                code_matches = re.findall(
-                    r"<execute>(.*?)</execute>", content, re.DOTALL
-                )
-                # Find the next observation
-                obs = ""
-                if (
-                    i + 1 < len(session_log)
-                    and session_log[i + 1].get("type") == "observation"
-                ):
-                    obs = session_log[i + 1].get("content", "")
-                for code in code_matches:
-                    code = code.strip()
-                    if code and not code.startswith("#!BASH"):
-                        blocks.append({"code": code, "output": obs})
-        return blocks
+        final_summary = ""
 
-    def _build_maintain_prompt(self, code_blocks: list[dict]) -> str:
-        """Build the curator prompt with current library state + recent executions."""
+        for i, step in enumerate(session_log):
+            if step.get("type") != "message_end":
+                continue
+            content = step.get("content", "")
+
+            # Find all <execute> blocks with their positions
+            exec_pattern = re.compile(r"<execute>(.*?)</execute>", re.DOTALL)
+            matches = list(exec_pattern.finditer(content))
+
+            if not matches:
+                # Pure-text message after code blocks → likely the final summary
+                cleaned = re.sub(r"<done\s*/?>", "", content).strip()
+                if cleaned and blocks:
+                    final_summary = cleaned
+                continue
+
+            # Locate the next observation in the log (paired with this message)
+            obs = ""
+            if (
+                i + 1 < len(session_log)
+                and session_log[i + 1].get("type") == "observation"
+            ):
+                obs = session_log[i + 1].get("content", "")
+                # Strip <observation> tags if present
+                obs = re.sub(r"</?observation>", "", obs).strip()
+
+            # Extract reasoning (text before first <execute>) and outcome (after last </execute>)
+            reasoning = content[: matches[0].start()].strip()
+            outcome = content[matches[-1].end():].strip()
+            outcome = re.sub(r"<done\s*/?>", "", outcome).strip()
+
+            for j, m in enumerate(matches):
+                code = m.group(1).strip()
+                if not code or code.startswith("#!BASH"):
+                    continue
+                blocks.append({
+                    "reasoning": reasoning if j == 0 else "",
+                    "code": code,
+                    # All execute blocks in one message share the combined observation
+                    "output": obs,
+                    "outcome": outcome if j == len(matches) - 1 else "",
+                })
+
+        return {"blocks": blocks, "final_summary": final_summary}
+
+    # Legacy alias for backward compat with existing tests
+    def _extract_executions(self, session_log: list[dict]) -> list[dict]:
+        """Legacy: returns just code+output pairs (no reasoning context)."""
+        summary = self._extract_session(session_log)
+        return [{"code": b["code"], "output": b["output"]} for b in summary["blocks"]]
+
+    def _build_maintain_prompt(
+        self,
+        session_summary: dict,
+        user_message: str | None = None,
+    ) -> str:
+        """Build the curator prompt with full session context."""
         current_lib = self._registry.list_meta()
         lib_section = json.dumps(current_lib, indent=2) if current_lib else "[]"
 
+        # User task — the WHY
+        user_section = (
+            f"\n## User's Original Request\n\n{user_message.strip()}\n"
+            if user_message and user_message.strip()
+            else "\n## User's Original Request\n\n(not provided)\n"
+        )
+
+        # Code blocks with reasoning + outcome
+        blocks = session_summary.get("blocks", [])
         exec_section = ""
-        for i, block in enumerate(code_blocks[:10]):  # Cap at 10 blocks
-            exec_section += f"\n### Block {i + 1}\n```python\n{block['code']}\n```\n"
-            if block["output"]:
-                exec_section += (
-                    f"Output:\n```\n{block['output'][:500]}\n```\n"
-                )
+        for i, block in enumerate(blocks[:10]):  # Cap at 10 blocks
+            exec_section += f"\n### Block {i + 1}\n"
+            if block.get("reasoning"):
+                exec_section += f"\n**Agent's reasoning before running this code:**\n{block['reasoning'][:600]}\n"
+            exec_section += f"\n**Code:**\n```python\n{block['code']}\n```\n"
+            if block.get("output"):
+                exec_section += f"\n**Output:**\n```\n{block['output'][:500]}\n```\n"
+            if block.get("outcome"):
+                exec_section += f"\n**Agent's interpretation of the result:**\n{block['outcome'][:400]}\n"
+
+        # Final summary (the agent's conclusion)
+        final = session_summary.get("final_summary", "")
+        final_section = (
+            f"\n## Agent's Final Summary\n\n{final[:800]}\n"
+            if final
+            else ""
+        )
 
         return MAINTAIN_PROMPT_TEMPLATE.format(
             library=lib_section,
+            user_request=user_section,
             executions=exec_section,
+            final_summary=final_section,
         )
 
     def _parse_actions(self, response: str) -> list[dict]:
@@ -227,3 +397,87 @@ class UtilityManager:
             except Exception as e:
                 logger.warning("Failed to apply action %s: %s", action, e)
         return result
+
+    # ------------------------------------------------------------------
+    # Trace persistence
+    # ------------------------------------------------------------------
+
+    def _save_trace(self, trace: dict) -> None:
+        """Persist a trace dict as JSON. Never raises."""
+        try:
+            ts = trace.get("timestamp", datetime.now().isoformat())
+            # File-safe timestamp
+            stamp = ts.replace(":", "-").replace(".", "-")
+            filename = f"{stamp}_{trace.get('mode', 'unknown')}.json"
+            path = self._trace_dir / filename
+            path.write_text(
+                json.dumps(trace, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            # Keep only the most recent 50 traces
+            self._prune_old_traces(keep=50)
+        except Exception as e:
+            logger.warning("Failed to save trace: %s", e)
+
+    def _prune_old_traces(self, keep: int = 50) -> None:
+        try:
+            files = sorted(
+                self._trace_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for f in files[keep:]:
+                f.unlink()
+        except Exception:
+            pass
+
+    def list_traces(self, limit: int = 20) -> list[dict]:
+        """Return summaries of the most recent traces, newest first."""
+        try:
+            files = sorted(
+                self._trace_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            summaries = []
+            for f in files[:limit]:
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    summaries.append({
+                        "file": f.name,
+                        "timestamp": data.get("timestamp"),
+                        "mode": data.get("mode"),
+                        "status": data.get("status"),
+                        "code_blocks": data.get("code_blocks_extracted", 0),
+                        "actions_count": len(data.get("parsed_actions", [])),
+                        "error": data.get("error"),
+                    })
+                except Exception:
+                    continue
+            return summaries
+        except Exception:
+            return []
+
+    def get_trace(self, filename: str) -> dict | None:
+        """Load a single trace by filename."""
+        try:
+            path = self._trace_dir / filename
+            if not path.exists():
+                return None
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+
+# ---------------------------------------------------------------------------
+# Trace helpers
+# ---------------------------------------------------------------------------
+
+
+def _new_trace(mode: str) -> dict:
+    """Initialize a trace dict with timestamp and mode."""
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "mode": mode,
+        "status": "running",
+    }

@@ -8,12 +8,13 @@ CAi has a layered architecture designed around composition:
 BaseAgent  (execution core: LangGraph + LLM + REPL)
     │
     └── A1pro  (orchestrator — wires everything below)
-              ├── execution/ (Python REPL + bash + timeout helpers)
-              ├── llm.py     (LLM factory — OpenAI / Anthropic / DeepSeek / Custom)
-              ├── prompt/    (PromptBuilder + sections)
-              ├── tools/     (ToolRegistry + ReplBridge + Scanners)
-              ├── skills/    (SkillLoader — SOP markdown files)
-              └── web_ui/    (FastAPI + static frontend)
+              ├── execution/   (Python REPL + bash + timeout helpers)
+              ├── llm.py       (LLM factory — OpenAI / Anthropic / DeepSeek / Custom)
+              ├── prompt/      (PromptBuilder + sections)
+              ├── tools/       (ToolRegistry + ReplBridge + Scanners)
+              ├── utilities/   (UtilityRegistry + UtilityManager — self-learning code reuse)
+              ├── skills/      (SkillLoader — SOP markdown files)
+              └── web_ui/      (FastAPI + static frontend)
 ```
 
 Each subsystem is small, testable in isolation, and depends only on the
@@ -151,11 +152,17 @@ Example of composing a prompt:
 prompt = (
     PromptBuilder()
     .add(CoreSection())                       # persona + interaction rules
-    .add(ToolsSection(tool_registry))         # reads from registry
-    .add(SkillsSection(skill_loader))         # reads from loader
+    .add(UtilitiesSection(utility_registry))  # PREFERRED helpers (try first)
+    .add(ToolsSection(tool_registry))         # FALLBACK low-level tools
+    .add(SkillsSection(skill_loader))         # SOPs for recurring workflows
     .build()
 )
 ```
+
+Section ordering matters — Utilities are listed BEFORE Tools so the
+agent is steered to prefer high-level, pre-validated helpers over
+re-implementing logic with raw tool calls. ToolsSection acts as a
+fallback when no utility covers the task.
 
 Adding a new section is a one-file change: subclass `PromptSection`,
 implement `render()`, and `.add(YourSection())` in A1pro's constructor.
@@ -230,6 +237,105 @@ for spec in scanner.scan():
 
 ---
 
+## Utilities subsystem
+
+`CAi/CAi_agent/utilities/`
+
+Self-learning code reuse library. The agent accumulates reusable functions
+from execution experience; an independent curator (UtilityManager) maintains
+quality in between sessions.
+
+```
+utilities/
+├── spec.py       # UtilitySpec — immutable descriptor (metadata + source code)
+├── registry.py   # UtilityRegistry — disk ↔ memory, CRUD, usage tracking
+├── section.py    # UtilitiesSection — PromptSection rendering for the agent
+└── manager.py    # UtilityManager — independent LLM-based curator
+```
+
+### Design principles
+
+```
+Tools      = building blocks (developer-maintained, static)
+Utilities  = assembled components (agent-maintained, dynamic)
+Skills     = workflow SOPs (developer-maintained, guides "how to use")
+```
+
+The main agent (A1pro) only consumes a snapshot of utilities — it never
+participates in maintenance decisions. Maintenance is handled by the
+UtilityManager during session gaps.
+
+### UtilitySpec
+
+Frozen dataclass. Each utility is stored as a single `.py` file with
+metadata in comment headers (`@name`, `@description`, `@call_count`,
+`@success_count`, `@created`, `@last_used`). Human-readable, git-trackable,
+machine-parseable.
+
+```python
+spec = UtilitySpec.from_file(Path("_utilities/load_docking_result.py"))
+# spec.name, spec.description, spec.code, spec.call_count, ...
+```
+
+### UtilityRegistry
+
+Disk ↔ memory bridge. Thread-safe (RLock). Provides:
+- `load_snapshot()` — exec each utility, return `{name: callable}` dict
+- `apply_usage(stats)` — update call/success counts after session
+- `save()` / `update()` / `delete()` — CRUD for UtilityManager
+- Enforces a configurable max (default: 20), evicts least-used on overflow
+
+### UtilitiesSection
+
+`PromptSection` subclass. Renders each utility's signature, one-line
+description, and "Use when:" guidance extracted from docstrings via AST
+parsing. Returns empty string when no utilities exist (auto-dropped by
+PromptBuilder).
+
+### Runtime monitoring
+
+Utilities are injected into the Jupyter kernel with transparent monitoring
+wrappers. The `_monitor_utility` decorator in the kernel tracks calls and
+errors in a `_utility_usage` dict. After each code execution, the parent
+process collects stats via a `__UTIL_USAGE__:` prefixed JSON line, then
+accumulates them in `_session_usage`. At session end, `flush_utility_usage()`
+returns the data for `apply_usage()`.
+
+### UtilityManager
+
+Independent lightweight curator — not a BaseAgent subclass. Uses a cheap
+LLM (e.g. gpt-4o-mini) to review session execution logs and decide
+whether to SAVE new utilities, UPDATE existing ones, or DELETE
+underperforming ones. Key rules:
+- Never copies executed code verbatim — rewrites into generalized,
+  type-annotated, documented functions
+- DELETE candidates: success_rate < 0.5 over 10+ calls, or unused for
+  20+ sessions
+- Triggered asynchronously at session end (non-blocking)
+
+### Storage layout
+
+```
+agent_workspace/_utilities/
+├── load_docking_result.py    # individual utility files
+├── parse_molecule_table.py
+├── merge_scores.py
+└── _meta.json                # index cache (rebuildable from .py headers)
+```
+
+### Relationship to other subsystems
+
+| Concept | Location | Maintained by | Injection | Prompt visible |
+|---------|----------|---------------|-----------|----------------|
+| Tools | `CAi/toolkit/` | Developer | ReplBridge → cloudpickle | ToolsSection |
+| Utilities | `_utilities/*.py` | Agent (UtilityManager) | inject_utilities_with_monitoring | UtilitiesSection |
+| Skills | `skills/*.md` | Developer | SkillLoader → text | SkillsSection |
+
+Three parallel pipelines, no interference. The utilities subsystem does
+not touch existing Tool / Skill / Prompt code.
+
+---
+
 ## A1pro
 
 `CAi/CAi_agent/agent.py`
@@ -238,10 +344,11 @@ Thin orchestrator. Its job is to:
 
 1. Create a `ToolRegistry` and attach a `ReplBridge`
 2. Run a `ModuleScanner` against `CAi.toolkit` to populate the registry
-3. Create a `SkillLoader` (optional)
-4. Initialize `BaseAgent` (LLM + LangGraph)
-5. Build a `PromptBuilder` with the three default sections
-6. Wire `registry.on_change` → auto-rebuild prompt
+3. Create a `UtilityRegistry` and inject utilities with monitoring (optional)
+4. Create a `SkillLoader` (optional)
+5. Initialize `BaseAgent` (LLM + LangGraph)
+6. Build a `PromptBuilder` with the four default sections
+7. Wire `registry.on_change` → auto-rebuild prompt
 
 All the public methods (`add_tool`, `remove_tool`, `list_tools`,
 `reload_tools`, `list_skills`, `reload_skills`) delegate to the
@@ -313,6 +420,7 @@ See `docs/web_ui_backend.md` for the full design rationale.
 | `DELETE` | `/api/workspace` | Clear workspace files |
 | `POST` | `/api/reset` | Full reset |
 | `POST` | `/api/export-pdf` | Export conversation to PDF |
+| `POST` | `/api/utilities/maintain` | Manually trigger utility maintenance |
 | `GET` | `/api/health` | Health check |
 
 ### Chat flow
@@ -328,7 +436,8 @@ POST /api/chat
     │       └── Streams {"type", "content"} dicts
     │
     ├── Emit SSE events to frontend
-    └── Persist user + assistant messages to ConversationStore
+    ├── Persist user + assistant messages to ConversationStore
+    └── Async task: flush utility usage → apply_usage → UtilityManager.maintain()
 ```
 
 ### SSE event types
@@ -490,6 +599,13 @@ tests/
 ├── test_tool_registry.py       # Registry CRUD + observer
 ├── test_tool_scanner.py        # ModuleScanner discovery
 ├── test_repl_bridge.py         # Registry → builtins sync
+├── test_utility_spec.py        # UtilitySpec file I/O + parsing
+├── test_utility_registry.py    # UtilityRegistry CRUD + usage tracking
+├── test_utilities_section.py   # UtilitiesSection prompt rendering
+├── test_utility_manager.py     # UtilityManager curator logic (mock LLM)
+├── test_utility_monitoring.py  # Kernel-side monitoring + flush
+├── test_utility_agent_integration.py   # A1pro + utilities end-to-end
+├── test_utility_session_lifecycle.py   # Full session: inject → call → collect → persist
 ├── test_agent_execution.py     # Stateless history, tools, code
 ├── test_execution_repl.py      # Persistent REPL namespace
 ├── test_execution_bash.py      # Bash subprocess wrapper
@@ -513,3 +629,7 @@ network, no API keys, no credentials required.
 - Registry observers are fail-isolated (one bad listener doesn't block others)
 - ReplBridge injects hidden tools (callable) but ToolsSection omits them (catalog)
 - PromptBuilder drops sections that render to an empty string
+- `flush_utility_usage()` resets `_session_usage` to empty after returning
+- `apply_usage()` correctly increments file-header counters
+- UtilityManager.maintain() never raises — all errors are caught and logged
+- Kernel restart re-injects monitoring bootstrap and re-wraps utilities

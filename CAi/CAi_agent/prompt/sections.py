@@ -38,9 +38,13 @@ HOW TO EXECUTE CODE:
     ls -l
     </execute>
 
+ENVIRONMENT STATE:
+- Persistent Jupyter IPython Kernel: The Python execution environment runs as a continuous, independent background process.
+- State Retention: Do NOT restart or re-initialize the environment for every <execute> block. Variables, library imports, and function definitions persist throughout the entire session. 
+- For example, a DataFrame `df` or an RDKit molecule object created in one round can be directly accessed and used in subsequent rounds without re-importing or re-defining.
+
 EXECUTION RULES:
 - Always print() results so they appear in observations.
-- Import tools before use: `from CAi.toolkit import tool_name`
 - Validate SMILES with RDKit before passing to tools.
 - Keep code simple. Break complex tasks into multiple rounds.
 - If code fails, analyze the error before retrying.
@@ -74,9 +78,14 @@ class CoreSection(PromptSection):
 # ---------------------------------------------------------------------------
 
 _TOOLS_HEADER = (
-    "AVAILABLE TOOLS\n"
+    "AVAILABLE TOOLS  (FALLBACK — use only if no utility fits)\n"
     + "=" * 50
-    + "\nImport before use: `from CAi.toolkit import <name>`\n"
+    + "\nThese are low-level building blocks. Prefer UTILITY FUNCTIONS\n"
+    + "above when one matches your task. Use these tools when:\n"
+    + "  - No utility's 'Use when' covers your scenario, or\n"
+    + "  - A utility failed and you need finer control.\n"
+    + "\n⚠ IMPORT REQUIRED for these tools (NOT for utilities above):\n"
+    + "    from CAi.toolkit import <name>\n"
 )
 
 

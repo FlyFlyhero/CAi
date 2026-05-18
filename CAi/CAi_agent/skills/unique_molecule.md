@@ -1,8 +1,16 @@
-# Skill: Unique Molecule Generation with Deduplication and Refill
+# Unique Molecule Generation with Deduplication and Refill
 
-## Purpose
-Use this skill when a molecule generation workflow must return a required number of unique candidate molecules.  
-This workflow removes duplicated SMILES structures from generated results and, if the number of unique molecules is still below the user-requested target, continues generating additional candidates until the target count is reached or a retry limit is hit.
+## Description
+Use this skill when a molecule generation workflow must return a required number of unique candidate molecules. This workflow removes duplicated SMILES structures from generated results and, if the number of unique molecules is still below the user-requested target, continues generating additional candidates until the target count is reached or a retry limit is hit.
+
+## Metadata
+
+**Category**: Post-Processing
+**Required Tools**: rdkit
+**Difficulty**: Easy
+**Use Cases**: Molecule deduplication, Unique candidate generation, Generation result cleanup
+
+---
 
 ## When to use
 Use this skill when:

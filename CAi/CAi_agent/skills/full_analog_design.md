@@ -1,9 +1,18 @@
-# Skill: Mol2Mol Analog Generation with Similarity and Diversity Control
+# Mol2Mol Analog Generation with Similarity and Diversity Control
 
-## Purpose
+## Description
 Use this skill when the user provides a complete molecule and wants to generate structurally similar analog molecules while preserving a reasonable level of similarity to the input molecule and maintaining sufficient diversity across the generated set.
 
 This workflow is designed for analog generation based on a full reference molecule using `generate_molecules_reinvent4_mol2mol`, followed by similarity filtering, diversity control, and ranking.
+
+## Metadata
+
+**Category**: Generative Chemistry
+**Required Tools**: generate_molecules_reinvent4_mol2mol, rdkit, calculate_scscore
+**Difficulty**: Medium
+**Use Cases**: Lead optimization, Analog generation, Molecular library expansion, SAR exploration
+
+---
 
 ## When to use
 Use this skill when:
@@ -64,7 +73,7 @@ If either of these is missing, skip affinity evaluation and continue with the ot
 ## Ranking rule
 - If the user specifies ranking criteria, follow the requested metrics and ranking order.
 - If the user does not specify any extra criteria, rank by SC score only.
-- If multiple metrics are requested, preserve the user’s ranking priority.
+- If multiple metrics are requested, preserve the user's ranking priority.
 - Similarity and diversity filtering should always happen before final ranking.
 
 ## Output expectations

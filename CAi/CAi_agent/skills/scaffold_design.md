@@ -1,14 +1,18 @@
-# Skill: Scaffold-Based Molecular Generation with Docking-First Evaluation
+# Scaffold-Based Molecular Generation with Docking-First Evaluation
 
-This skill generates molecules from a user-provided scaffold, prioritizes `perform_molecular_docking_vina` when docking inputs are ready, and otherwise falls back to `calculate_scscore`, `predict_antibacterial_pmic`, and `predict_molecule_toxicity` for ranking and reporting.
-
-## Purpose
-
+## Description
 Use this skill when the user provides a scaffold and wants to generate candidate molecules, evaluate them, and rank them for downstream selection.
 
 This workflow is **docking-first**:
 - if docking is feasible, rank molecules primarily by Vina score
 - if docking is not feasible, skip Vina and rank molecules using SCScore, pMIC/MIC, and toxicity
+
+## Metadata
+
+**Category**: Generative Chemistry
+**Required Tools**: generate_scaffold_analogs, generate_libinvent_decorations, generate_molecules_reinvent4_libinvent, generate_molecules_reinvent4_mol2mol, perform_molecular_docking_vina, calculate_scscore, predict_antibacterial_pmic, predict_molecule_toxicity
+**Difficulty**: Expert
+**Use Cases**: Scaffold-based lead generation, R-group decoration, Fragment growing, Scaffold hopping
 
 ---
 

@@ -28,7 +28,7 @@ logger = get_logger("CAi.web_ui.chat")
 router = APIRouter(prefix="/api", tags=["chat"])
 
 # Cache the most recent session log so the utilities router can access it.
-_last_session_log: dict = {"log": []}
+_last_session_log: dict = {"log": [], "user_message": ""}
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +190,9 @@ async def chat(
                 has_executions = any(s.get("type") == "observation" for s in raw_session_log)
                 if has_executions:
                     yield f"data: {json.dumps({'type': 'maintenance_pending'})}\n\n"
-                    # Cache session log for the utilities router to access.
+                    # Cache session log + user message for utilities router.
                     _last_session_log["log"] = raw_session_log
+                    _last_session_log["user_message"] = request.message
 
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

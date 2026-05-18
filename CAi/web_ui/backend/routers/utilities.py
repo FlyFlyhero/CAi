@@ -40,6 +40,7 @@ async def maintain(
     from .chat import _last_session_log
 
     session_log = _last_session_log.get("log", [])
+    user_message = _last_session_log.get("user_message", "")
     if not session_log:
         return {"status": "no_data", "message": "No recent session data"}
 
@@ -49,10 +50,10 @@ async def maintain(
     loop = asyncio.get_event_loop()
 
     if request.mode == "preview":
-        actions = await loop.run_in_executor(None, manager.preview, session_log)
+        actions = await loop.run_in_executor(None, manager.preview, session_log, user_message)
         return {"status": "ok", "preview": actions}
     else:
-        result = await loop.run_in_executor(None, manager.maintain, session_log)
+        result = await loop.run_in_executor(None, manager.maintain, session_log, user_message)
         return {"status": "ok", **result}
 
 
@@ -63,3 +64,32 @@ async def list_utilities(agent=Depends(get_agent)):
     if registry is None:
         return {"utilities": []}
     return {"utilities": registry.list_meta()}
+
+
+@router.get("/traces")
+async def list_traces(limit: int = 20, agent=Depends(get_agent)):
+    """List recent UtilityManager traces (LLM call history)."""
+    registry = getattr(agent, "utility_registry", None)
+    if registry is None:
+        return {"traces": []}
+
+    from CAi.CAi_agent.utilities import UtilityManager
+
+    manager = UtilityManager(registry, llm=agent.llm)
+    return {"traces": manager.list_traces(limit=limit)}
+
+
+@router.get("/traces/{filename}")
+async def get_trace(filename: str, agent=Depends(get_agent)):
+    """Fetch one trace by filename (full prompt + response + actions)."""
+    registry = getattr(agent, "utility_registry", None)
+    if registry is None:
+        return {"error": "utilities disabled"}
+
+    from CAi.CAi_agent.utilities import UtilityManager
+
+    manager = UtilityManager(registry, llm=agent.llm)
+    trace = manager.get_trace(filename)
+    if trace is None:
+        return {"error": "trace not found"}
+    return trace

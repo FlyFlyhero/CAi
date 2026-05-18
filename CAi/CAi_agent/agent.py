@@ -105,11 +105,14 @@ class A1pro(BaseAgent):
         )
 
         # -------- Prompt subsystem -------------------------------------
-        builder = PromptBuilder().add(CoreSection()).add(ToolsSection(self.tool_registry))
+        # Section order matters: Utilities go BEFORE Tools so the agent
+        # is steered to prefer high-level helpers over raw tool calls.
+        builder = PromptBuilder().add(CoreSection())
         if self.utility_registry:
             from CAi.CAi_agent.utilities import UtilitiesSection
 
             builder.add(UtilitiesSection(self.utility_registry))
+        builder.add(ToolsSection(self.tool_registry))
         builder.add(SkillsSection(self.skill_loader, self.exclude_skills))
         self.prompt_builder = builder
 

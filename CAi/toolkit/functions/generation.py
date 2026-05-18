@@ -2,19 +2,17 @@
 
 Each function wraps a server-side model (scaffold-constrained generators,
 de-novo generators, pocket-aware generators). The wrappers validate
-inputs, call run_tool(...), and reshape the response into a JSON string
-for the agent.
+inputs, call run_tool(...), and return a native Python dictionary
+for the agent to easily parse.
 """
 
 from __future__ import annotations
-
-import json
 
 from .._validators import non_empty_smiles, reject_chiral, require_attachment_point
 from ..client import run_tool
 
 
-def generate_scaffold_analogs(smiles: str, num_analogs: int = 10) -> str:
+def generate_scaffold_analogs(smiles: str, num_analogs: int = 10) -> dict:
     """
     Generate novel molecular analogs from a scaffold SMILES using a pre-trained RNN-based scaffold generation model.
 
@@ -31,31 +29,29 @@ def generate_scaffold_analogs(smiles: str, num_analogs: int = 10) -> str:
         num_analogs: How many analogs to request (default 10; actual count may be smaller).
 
     Returns:
-        JSON string.
-        Success: {"status": "success", "generated_count": int, "molecules": [smiles, ...]}
-        Error:   {"error": str}
+        Dictionary with status and results.
+        Success: {"success": True, "generated_count": int, "molecules": [smiles, ...]}
+        Error:   {"success": False, "error": str}
     """
     if err := require_attachment_point(smiles):
-        return json.dumps({"error": err})
+        return {"success": False, "error": err}
 
     result = run_tool("scaffold", {"smiles": smiles, "num_analogs": num_analogs})
     if result.get("error"):
-        return json.dumps(result)
+        return {"success": False, "error": result["error"]}
 
     summary = result.get("summary", {})
     generated_smiles = [item["smiles"] for item in result.get("results", [])]
 
-    return json.dumps(
-        {
-            "status": "success",
-            "generated_count": summary.get("valid_unique_generated"),
-            "molecules": generated_smiles,
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "success": True,
+        "status": "success",
+        "generated_count": summary.get("valid_unique_generated"),
+        "molecules": generated_smiles,
+    }
 
 
-def generate_libinvent_decorations(smiles: str, num_decorations: int = 3) -> str:
+def generate_libinvent_decorations(smiles: str, num_decorations: int = 3) -> dict:
     """
     Decorate a chemical scaffold using the Lib-INVENT reaction-based model.
 
@@ -68,35 +64,33 @@ def generate_libinvent_decorations(smiles: str, num_decorations: int = 3) -> str
         num_decorations: How many decorated variants to request (default 3).
 
     Returns:
-        JSON string. See status / error fields on success / failure.
+        Dictionary with generated molecules and statistics.
     """
     if err := require_attachment_point(smiles):
-        return json.dumps({"error": err})
+        return {"success": False, "error": err}
     if err := reject_chiral(smiles):
-        return json.dumps({"error": err})
+        return {"success": False, "error": err}
 
     payload = {"smiles": smiles, "number_of_decorations_per_scaffold": num_decorations}
     result = run_tool("libinvent", payload)
     if result.get("error"):
-        return json.dumps({"error": result["error"]})
+        return {"success": False, "error": result["error"]}
 
     summary = result.get("summary", {})
     results = result.get("results", [])
     molecules_smiles = [row.get("SMILES") for row in results if row.get("SMILES")]
     input_scaffold = results[0].get("input_scaffold") if results else None
 
-    return json.dumps(
-        {
-            "status": "success",
-            "input_scaffold": input_scaffold,
-            "requested_num_decorations": num_decorations,
-            "generated_count": summary.get("row_count"),
-            "csv_columns": summary.get("columns", []),
-            "molecules_smiles": molecules_smiles,
-            "decorated_molecules_preview": summary.get("preview", []),
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "success": True,
+        "status": "success",
+        "input_scaffold": input_scaffold,
+        "requested_num_decorations": num_decorations,
+        "generated_count": summary.get("row_count"),
+        "csv_columns": summary.get("columns", []),
+        "molecules_smiles": molecules_smiles,
+        "decorated_molecules_preview": summary.get("preview", []),
+    }
 
 
 def generate_molecules_for_pocket(
@@ -104,7 +98,7 @@ def generate_molecules_for_pocket(
     center_xyz: list | None = None,
     ref_ligand_path: str | None = None,
     num_samples: int = 10,
-) -> str:
+) -> dict:
     """
     Target-aware zero-shot molecular generation with RxnFlow.
 
@@ -119,13 +113,11 @@ def generate_molecules_for_pocket(
         num_samples: Molecules to generate (default 10).
 
     Returns:
-        JSON string with generated_count, sampling_time_sec, full_results_csv_path,
-        and top_molecules_preview (small preview, not the full set).
+        Dictionary with generated_count, sampling_time_sec, full_results_csv_path,
+        and top_molecules_preview.
     """
     if not center_xyz and not ref_ligand_path:
-        return json.dumps(
-            {"error": "Provide either center_xyz or ref_ligand_path to define the pocket."}
-        )
+        return {"success": False, "error": "Provide either center_xyz or ref_ligand_path to define the pocket."}
 
     payload: dict = {
         "protein_pdb_path": protein_pdb_path,
@@ -139,24 +131,22 @@ def generate_molecules_for_pocket(
 
     result = run_tool("rxnflow", payload, timeout_mins=15)
     if result.get("error"):
-        return json.dumps({"error": result["error"]})
+        return {"success": False, "error": result["error"]}
 
     summary = result.get("summary", {})
     results_data = result.get("results", {})
 
-    return json.dumps(
-        {
-            "status": "success",
-            "generated_count": summary.get("generated_count"),
-            "sampling_time_sec": summary.get("sampling_time_sec"),
-            "full_results_csv_path": summary.get("output_file"),
-            "top_molecules_preview": results_data.get("generated_preview", []),
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "success": True,
+        "status": "success",
+        "generated_count": summary.get("generated_count"),
+        "sampling_time_sec": summary.get("sampling_time_sec"),
+        "full_results_csv_path": summary.get("output_file"),
+        "top_molecules_preview": results_data.get("generated_preview", []),
+    }
 
 
-def generate_molecules_reinvent4_denovo(num_variants: int = 100) -> str:
+def generate_molecules_reinvent4_denovo(num_variants: int = 100) -> dict:
     """
     Generate completely novel molecules from scratch using the REINVENT4 de novo prior model.
 
@@ -166,27 +156,25 @@ def generate_molecules_reinvent4_denovo(num_variants: int = 100) -> str:
         num_variants: Number of molecules to generate (default 100).
 
     Returns:
-        JSON string with status, generated_count, and molecules_smiles.
+        Dictionary with generated count and SMILES list.
     """
     result = run_tool("reinvent4", {"num_variants": num_variants}, action="de_novo", timeout_mins=10)
     if result.get("error"):
-        return json.dumps({"error": result["error"]})
+        return {"success": False, "error": result["error"]}
 
     summary = result.get("summary", {})
     molecules_data = result.get("results", {}).get("molecules", [])
     smiles_list = [mol["smiles"] for mol in molecules_data if mol.get("smiles")]
 
-    return json.dumps(
-        {
-            "status": "success",
-            "generated_count": summary.get("generated_count", len(smiles_list)),
-            "molecules_smiles": smiles_list,
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "success": True,
+        "status": "success",
+        "generated_count": summary.get("generated_count", len(smiles_list)),
+        "molecules_smiles": smiles_list,
+    }
 
 
-def generate_molecules_reinvent4_libinvent(smiles: str, num_variants: int = 50) -> str:
+def generate_molecules_reinvent4_libinvent(smiles: str, num_variants: int = 50) -> dict:
     """
     Decorate a chemical scaffold by generating R-group variants at [*] attachment points
     using the REINVENT4 LibInvent model.
@@ -199,7 +187,7 @@ def generate_molecules_reinvent4_libinvent(smiles: str, num_variants: int = 50) 
         num_variants: Variants to generate (default 50).
     """
     if err := require_attachment_point(smiles):
-        return json.dumps({"error": err})
+        return {"success": False, "error": err}
 
     result = run_tool(
         "reinvent4",
@@ -208,21 +196,19 @@ def generate_molecules_reinvent4_libinvent(smiles: str, num_variants: int = 50) 
         timeout_mins=10,
     )
     if result.get("error"):
-        return json.dumps({"error": result["error"]})
+        return {"success": False, "error": result["error"]}
 
     summary = result.get("summary", {})
     molecules_data = result.get("results", {}).get("molecules", [])
     smiles_list = [mol["smiles"] for mol in molecules_data if mol.get("smiles")]
 
-    return json.dumps(
-        {
-            "status": "success",
-            "input_scaffold": smiles,
-            "generated_count": summary.get("generated_count", len(smiles_list)),
-            "molecules_smiles": smiles_list,
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "success": True,
+        "status": "success",
+        "input_scaffold": smiles,
+        "generated_count": summary.get("generated_count", len(smiles_list)),
+        "molecules_smiles": smiles_list,
+    }
 
 
 def generate_molecules_reinvent4_mol2mol(
@@ -230,7 +216,7 @@ def generate_molecules_reinvent4_mol2mol(
     num_variants: int = 50,
     strategy: str = "beamsearch",
     temperature: float = 1.0,
-) -> str:
+) -> dict:
     """
     Generate structural analogs of a reference molecule while preserving stereochemistry
     using the REINVENT4 Mol2Mol model.
@@ -245,7 +231,7 @@ def generate_molecules_reinvent4_mol2mol(
         temperature: Sampling temperature (default 1.0).
     """
     if err := non_empty_smiles(smiles):
-        return json.dumps({"error": err})
+        return {"success": False, "error": err}
 
     payload = {
         "smiles_list": [smiles],
@@ -255,18 +241,16 @@ def generate_molecules_reinvent4_mol2mol(
     }
     result = run_tool("reinvent4", payload, action="mol2mol", timeout_mins=10)
     if result.get("error"):
-        return json.dumps({"error": result["error"]})
+        return {"success": False, "error": result["error"]}
 
     summary = result.get("summary", {})
     molecules_data = result.get("results", {}).get("molecules", [])
     smiles_out = [mol["smiles"] for mol in molecules_data if mol.get("smiles")]
 
-    return json.dumps(
-        {
-            "status": "success",
-            "input_smiles": smiles,
-            "generated_count": summary.get("generated_count", len(smiles_out)),
-            "molecules_smiles": smiles_out,
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "success": True,
+        "status": "success",
+        "input_smiles": smiles,
+        "generated_count": summary.get("generated_count", len(smiles_out)),
+        "molecules_smiles": smiles_out,
+    }

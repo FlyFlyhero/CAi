@@ -1,8 +1,16 @@
-# Skill: PDB Structure Retrieval by ID
+# PDB Structure Retrieval by ID
 
-## Purpose
-Use this skill when the user wants to work with a target protein structure but has not provided a local protein file.  
-This workflow supports automatic retrieval of a protein structure file only when the user provides a valid PDB ID.
+## Description
+Use this skill when the user wants to work with a target protein structure but has not provided a local protein file. This workflow supports automatic retrieval of a protein structure file only when the user provides a valid PDB ID.
+
+## Metadata
+
+**Category**: Structure Retrieval
+**Required Tools**: fetch_pdb_structure
+**Difficulty**: Easy
+**Use Cases**: Target preparation for docking, Protein structure retrieval, Structure-based workflow setup
+
+---
 
 ## When to use
 Use this skill when:
@@ -17,8 +25,8 @@ Do not use this skill when:
 - the task does not require a protein structure file.
 
 ## Core rule
-If the user does not provide a local protein structure file, attempt automatic download only when the user provides a valid PDB ID.  
-Do not attempt structure retrieval from a protein name alone.  
+If the user does not provide a local protein structure file, attempt automatic download only when the user provides a valid PDB ID.
+Do not attempt structure retrieval from a protein name alone.
 If the user provides only a target name, ask for the PDB ID instead of the protein name.
 
 ## Core workflow
