@@ -25,6 +25,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from .context_compression import hybrid_compress
 from .execution import (
     inject_custom_functions,
     run_bash_script,
@@ -68,7 +69,7 @@ class BaseAgent:
         self.timeout_seconds = timeout_seconds
         self._system_prompt = system_prompt or self._default_system_prompt()
         self.max_history_pairs = max_history_pairs
-        # Hook for future advanced context compression (e.g. LLM-based summary).
+        # Hook to override the default hybrid_compress strategy.
         # Signature: (history: list[dict]) -> list[dict]
         self._context_compress_hook = context_compress_hook
 
@@ -207,27 +208,18 @@ RULES:
         return messages
 
     def _maybe_compress_history(self, history: list[dict]) -> list[dict]:
-        """Apply sliding window or custom compression to history."""
-        max_msgs = self.max_history_pairs * 2  # pairs → individual messages
-
+        """Compress history via hook (if set) or the default hybrid_compress."""
+        max_msgs = self.max_history_pairs * 2
         if len(history) <= max_msgs:
             return history
 
-        # If a custom hook is provided, delegate to it.
         if self._context_compress_hook is not None:
             try:
                 return self._context_compress_hook(history)
             except Exception as e:  # noqa: BLE001
-                logger.warning("Context compress hook failed: %s; falling back to truncation", e)
+                logger.warning("Context compress hook failed: %s; falling back to hybrid_compress", e)
 
-        # Default: keep recent messages, prepend a notice.
-        recent = history[-max_msgs:]
-        trimmed_count = len(history) - max_msgs
-        notice = {
-            "role": "assistant",
-            "content": f"[注意：前面 {trimmed_count} 条消息已省略以节省上下文空间。]",
-        }
-        return [notice] + recent
+        return hybrid_compress(history, max_pairs=self.max_history_pairs)
 
     def _invoke_llm_full(self, messages: list[BaseMessage]) -> str:
         """Blocking LLM call — returns full response as a string."""

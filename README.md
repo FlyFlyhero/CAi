@@ -27,12 +27,14 @@ CAi is an AI agent platform for drug discovery workflows. It combines a lightwei
 
 ```
 BaseAgent  (core: LangGraph + LLM + REPL)
+    ├── context_compression.py  (hybrid partition for long conversations)
     └── A1pro  (orchestrator)
               ├── execution/   (Jupyter kernel REPL + bash + timeout)
               ├── prompt/      (PromptBuilder + composable sections)
               ├── tools/       (ToolRegistry + ReplBridge + ModuleScanner)
               ├── utilities/   (self-learning code reuse library)
               ├── skills/      (SOP Markdown files)
+              ├── cli/         (terminal REPL — theme, display, streaming, commands)
               └── web_ui/      (FastAPI + static frontend)
 ```
 
@@ -101,8 +103,13 @@ python -m CAi.toolkit.server.app
 ### 5. Launch the agent
 
 ```bash
+# Web UI
 python CAi/main.py
 # Web UI at http://localhost:7001
+
+# Or interactive CLI REPL
+python CAi/main.py --cli
+# Optionally resume a conversation: --resume <conv_id>
 ```
 
 ## Interaction Modes
@@ -149,11 +156,13 @@ CAi_copilot/
 │   │   ├── base.py                  # BaseAgent — LangGraph + LLM + REPL
 │   │   ├── agent.py                 # A1pro — orchestrator
 │   │   ├── llm.py                   # LLM factory (Anthropic/OpenAI/DeepSeek/Custom)
+│   │   ├── context_compression.py   # Hybrid partition strategy for long conversations
 │   │   ├── prompt/                  # PromptBuilder + composable sections
 │   │   ├── tools/                   # ToolRegistry + Scanner + ReplBridge
 │   │   ├── utilities/               # Self-learning code reuse library
 │   │   ├── execution/               # Jupyter kernel REPL + bash + timeout
 │   │   └── skills/                  # SOP Markdown files
+│   ├── cli/                         # Terminal REPL (theme, display, streaming, commands)
 │   ├── toolkit/                     # Agent-facing drug discovery tools
 │   │   ├── client.py                # HTTP client for the tool server
 │   │   ├── _validators.py           # SMILES & pocket input validators

@@ -28,12 +28,14 @@ CAi 是一个面向药物发现工作流的 AI Agent 平台，将轻量级 LangG
 
 ```
 BaseAgent  （核心：LangGraph + LLM + REPL）
+    ├── context_compression.py  （长对话混合分区压缩策略）
     └── A1pro  （编排层）
               ├── execution/   （Jupyter kernel REPL + bash + timeout）
               ├── prompt/      （PromptBuilder + 可组合的 Section）
               ├── tools/       （ToolRegistry + ReplBridge + ModuleScanner）
               ├── utilities/   （自主学习代码复用库）
               ├── skills/      （SOP Markdown 文件）
+              ├── cli/         （终端 REPL — 主题、显示、流式输出、命令）
               └── web_ui/      （FastAPI + 静态前端）
 ```
 
@@ -102,8 +104,13 @@ python -m CAi.toolkit.server.app
 ### 5. 启动 Agent
 
 ```bash
+# Web UI
 python CAi/main.py
 # Web UI 地址：http://localhost:7001
+
+# 或使用交互式 CLI 终端
+python CAi/main.py --cli
+# 可选：恢复对话 --resume <conv_id>
 ```
 
 ## 交互模式
@@ -149,11 +156,13 @@ CAi_copilot/
 │   │   ├── base.py                  # BaseAgent — LangGraph + LLM + REPL
 │   │   ├── agent.py                 # A1pro — 编排层
 │   │   ├── llm.py                   # LLM 工厂（Anthropic/OpenAI/DeepSeek/Custom）
+│   │   ├── context_compression.py   # 长对话混合分区压缩策略
 │   │   ├── prompt/                  # PromptBuilder + 可组合的 Section
 │   │   ├── tools/                   # ToolRegistry + Scanner + ReplBridge
 │   │   ├── utilities/               # 自主学习代码复用库
 │   │   ├── execution/               # Jupyter kernel REPL + bash + timeout
 │   │   └── skills/                  # SOP Markdown 文件
+│   ├── cli/                         # 终端 REPL（主题、显示、流式输出、命令）
 │   ├── toolkit/                     # 面向 Agent 的药物发现工具集
 │   │   ├── client.py                # 工具服务端 HTTP 客户端
 │   │   ├── _validators.py           # SMILES 与口袋输入校验器

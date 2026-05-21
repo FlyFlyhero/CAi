@@ -7,6 +7,7 @@ CAi has a layered architecture designed around composition:
 ```
 BaseAgent  (execution core: LangGraph + LLM + REPL)
     │
+    ├── context_compression.py  (hybrid partition strategy for long conversations)
     └── A1pro  (orchestrator — wires everything below)
               ├── execution/   (Python REPL + bash + timeout helpers)
               ├── llm.py       (LLM factory — OpenAI / Anthropic / DeepSeek / Custom)
@@ -14,6 +15,7 @@ BaseAgent  (execution core: LangGraph + LLM + REPL)
               ├── tools/       (ToolRegistry + ReplBridge + Scanners)
               ├── utilities/   (UtilityRegistry + UtilityManager — self-learning code reuse)
               ├── skills/      (SkillLoader — SOP markdown files)
+              ├── cli/         (terminal REPL — theme, display, streaming, commands)
               └── web_ui/      (FastAPI + static frontend)
 ```
 
@@ -129,6 +131,98 @@ agent.run_with_history_streaming(prompt, history)    # streaming with prior conv
 The agent is stateless — history is passed explicitly per call.
 An optional `context_compress_hook` can be passed to `BaseAgent.__init__`
 to trim history when it grows large.
+
+---
+
+## Context compression
+
+`CAi/CAi_agent/context_compression.py`
+
+When conversation history exceeds the `max_history_pairs` budget (default:
+40 pairs ≈ 80 messages), the default **hybrid partition** strategy (zero
+extra LLM calls) compresses history into three zones:
+
+| Zone | Region | Strategy |
+|------|--------|----------|
+| Zone 1 | Recent ~50% | Kept verbatim — coherent context for the current turn |
+| Zone 2 | Middle | Selectively keep high-score messages (score ≥ 6) |
+| Zone 3 | Oldest | Dropped, with a one-line summary notice prepended |
+
+**Scoring heuristic** (`_score_message`):
+
+| Message type | Base score | Bonus |
+|-------------|-----------|-------|
+| User message | 10 | +5 if contains domain keywords (SMILES, .pdb, score, etc.) |
+| Assistant + `<observation>` | 8 | (factual tool results) |
+| Assistant + domain keywords | 6 | |
+| Assistant + `<execute>` | 5 | |
+| Assistant plain reasoning | 2 | (safe to drop) |
+
+Users can swap in a custom strategy (e.g. LLM-based summarisation) via
+`BaseAgent.__init__(context_compress_hook=...)`. The hook signature is
+`(history: list[dict]) -> list[dict]`. On failure the system falls back
+to `hybrid_compress`.
+
+---
+
+## CLI
+
+`CAi/cli/`
+
+Interactive terminal REPL for the agent. Refactored from a single-file
+`cli.py` into a modular package:
+
+```
+cli/
+├── __init__.py     # Exports launch_cli
+├── app.py          # Entry point — launch_cli(), repl_loop()
+├── commands.py     # Command dispatcher (:quit, :help, :load, :retry, etc.)
+├── display.py      # Output formatting (banner, panels, tables, history)
+├── input.py        # prompt_toolkit session, multiline mode, bracket detection
+├── session.py      # Conversation load/save/append via ConversationStore
+├── streaming.py    # Stream agent events → terminal (token/observation/code)
+└── theme.py        # Rich console theme (deep space + neon accents)
+```
+
+### REPL flow
+
+```
+launch_cli(agent)
+    │
+    ├── set_workspace_dir() + ConversationStore
+    ├── init session (new or --resume)
+    │
+    └── repl_loop()
+          ├── prompt_toolkit prompt (with command completer)
+          ├── command dispatch (:quit, :help, :load, :ml, :retry, …)
+          ├── stream_response() — consume agent.run_with_history_streaming()
+          │     ├── token    → print inline (filter <execute> tags)
+          │     ├── observation → Rich panel
+          │     └── message_end → persist turn + flush utility usage
+          └── Ctrl+C → StreamingInterrupted (partial save)
+```
+
+### Supported commands
+
+| Command | Action |
+|---------|--------|
+| `:quit` / `:q` | Exit session |
+| `:help` / `:h` | Show command help |
+| `:new` | Start new conversation |
+| `:convs` | List saved conversations |
+| `:load <id>` | Load a conversation |
+| `:ml` | Multi-line input mode (Esc+Enter to submit) |
+| `:retry` | Retry last user message |
+| `:history [n]` | Show last n turns |
+| `:last_obs` | Show last execution output in full |
+| `:tools` | List loaded tools |
+| `:rename <title>` | Rename current session |
+| `:forget` | Clear conversation memory (keep session) |
+| `:delete` | Delete session & start new |
+| `:reset-kernel` | Reset REPL kernel |
+| `:clear` | Clear terminal screen |
+
+Launched via `python -m CAi.main --cli` (optionally `--resume <conv_id>`).
 
 ---
 
