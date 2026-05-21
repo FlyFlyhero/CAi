@@ -20,7 +20,10 @@ from .generation import (
     generate_molecules_reinvent4_denovo,
     generate_molecules_reinvent4_libinvent,
     generate_molecules_reinvent4_mol2mol,
+    generate_molecules_sc2mol,
     generate_scaffold_analogs,
+    infer_synthesis_synllama,
+    run_gromacs_md,
 )
 
 __all__ = [
@@ -35,5 +38,8 @@ __all__ = [
     "generate_molecules_reinvent4_denovo",
     "generate_molecules_reinvent4_libinvent",
     "generate_molecules_reinvent4_mol2mol",
+    "generate_molecules_sc2mol",
     "generate_scaffold_analogs",
+    "infer_synthesis_synllama",
+    "run_gromacs_md",
 ]

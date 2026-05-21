@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 # Allow running from anywhere
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent  # repo root (tests/scripts/ → 3 levels up)
 sys.path.insert(0, str(ROOT))
 
 
@@ -46,7 +46,10 @@ def _build_agent_without_llm():
     try:
         from CAi.CAi_agent.agent import A1pro
 
-        agent = A1pro(llm="stub-model")
+        agent = A1pro(
+            llm="stub-model",
+            local_tools_dir=str(ROOT / "agent_workspace/_local_tools"),
+        )
         return agent
     finally:
         llm_module.get_llm = original_llm
@@ -80,9 +83,10 @@ def _print_stats(agent) -> None:
     print("-" * 70)
     print(f"{'TOTAL':<25} {total_chars:>10} {est_tokens(full):>10} {100.0:>7.1f}%")
     print("=" * 70)
-    print(f"Tools loaded:     {len(agent.tool_registry)}")
-    print(f"Skills loaded:    {len(agent.list_skills())}")
-    print(f"Utilities loaded: {len(agent.utility_registry) if agent.utility_registry else 0}")
+    print(f"Tools loaded:       {len(agent.tool_registry)}")
+    print(f"Skills loaded:      {len(agent.list_skills())}")
+    print(f"Utilities loaded:   {len(agent.utility_registry) if agent.utility_registry else 0}")
+    print(f"Local tools loaded: {len(agent.local_tools_loader) if agent.local_tools_loader else 0}")
 
 
 def _print_section(agent, section_filter: str) -> None:

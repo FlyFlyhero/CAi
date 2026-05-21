@@ -1,0 +1,8 @@
+{
+	"name": "gromacs_runner",
+	"conda_env": "base",
+	"gpu": true,
+	"actions": {
+		"default": "run.py"
+	}
+}

@@ -32,25 +32,19 @@ def non_empty_smiles(smiles: str | None) -> str | None:
 
 def reject_chiral(smiles: str | None) -> str | None:
     """
-    Reject SMILES containing '@' or '@@' stereochemistry markers.
+    Reject SMILES containing '@@' stereochemistry markers.
 
     Some scaffold-decoration models, especially LibInvent-style workflows,
     may fail or behave unpredictably with explicit chirality.
+    Single '@' is allowed. Empty/None inputs are silently accepted (callers
+    should validate emptiness separately via require_attachment_point etc.).
     """
-    if err := non_empty_smiles(smiles):
-        return err
-
-    assert smiles is not None
+    if not smiles or not isinstance(smiles, str):
+        return None  # not our job to check emptiness
 
     if "@@" in smiles:
         return (
             "This tool does not support '@@' stereochemistry. "
-            "Please use a non-chiral scaffold or use Mol2Mol mode for complete chiral molecules."
-        )
-
-    if "@" in smiles:
-        return (
-            "This tool does not support '@' stereochemistry. "
             "Please use a non-chiral scaffold or use Mol2Mol mode for complete chiral molecules."
         )
 

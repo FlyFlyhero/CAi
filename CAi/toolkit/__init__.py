@@ -25,10 +25,13 @@ from .functions import (
     generate_molecules_reinvent4_denovo,
     generate_molecules_reinvent4_libinvent,
     generate_molecules_reinvent4_mol2mol,
+    generate_molecules_sc2mol,
     generate_scaffold_analogs,
+    infer_synthesis_synllama,
     perform_molecular_docking_vina,
     predict_antibacterial_pmic,
     predict_molecule_toxicity,
+    run_gromacs_md,
 )
 from .skill_helpers import get_skill_content, list_available_skills
 
@@ -44,7 +47,10 @@ __all__ = [
     "generate_molecules_reinvent4_denovo",
     "generate_molecules_reinvent4_libinvent",
     "generate_molecules_reinvent4_mol2mol",
+    "generate_molecules_sc2mol",
     "generate_scaffold_analogs",
+    "infer_synthesis_synllama",
+    "run_gromacs_md",
     # skill helpers (registered as hidden tools in A1pro)
     "get_skill_content",
     "list_available_skills",

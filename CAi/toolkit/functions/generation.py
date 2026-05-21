@@ -13,8 +13,197 @@ from .._validators import (
     require_attachment_point,
     require_pocket_definition,
     valid_complete_molecule_smiles,
+    valid_existing_file,
 )
 from ..client import run_tool
+
+
+def run_gromacs_md(
+    step: str,
+    input_pdb: str | None = None,
+    input_gro: str | None = None,
+    ff: str = "amber99sb-ildn",
+    water: str = "tip3p",
+    mode: str = "nvt",
+) -> dict:
+    """Run a GROMACS molecular dynamics simulation step.
+
+    Supports a full MD workflow: topology preparation → solvation →
+    energy minimization → NVT/NPT equilibration → production MD.
+
+    Each step operates in the job sandbox directory. Output files
+    (.gro, .xtc, .top, etc.) are written to the sandbox and referenced
+    in the result.
+
+    Args:
+        step:      MD step to run. One of: "prep", "solvate", "minimize",
+                   "equilibrate", "production".
+        input_pdb: Input PDB file (required for "prep" step).
+        input_gro: Input GRO file (for steps after prep; defaults vary by step).
+        ff:        Force field (default "amber99sb-ildn", used in "prep").
+        water:     Water model (default "tip3p", used in "prep").
+        mode:      Equilibration mode "nvt" or "npt" (used in "equilibrate").
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "step": str,
+            "data": { "output_gro": str, "message": str, ... },
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    valid_steps = {"prep", "solvate", "minimize", "equilibrate", "production"}
+    if step not in valid_steps:
+        return {"success": False, "error": f"step must be one of {sorted(valid_steps)}, got '{step}'"}
+
+    if step == "prep" and input_pdb:
+        if err := valid_existing_file(input_pdb, field_name="input_pdb"):
+            return {"success": False, "error": err}
+
+    payload: dict = {"step": step}
+    if input_pdb is not None:
+        payload["input_pdb"] = input_pdb
+    if input_gro is not None:
+        payload["input_gro"] = input_gro
+    if step == "prep":
+        payload["ff"] = ff
+        payload["water"] = water
+    if step == "equilibrate":
+        payload["mode"] = mode
+
+    # MD production can be slow; allow up to 2 hours
+    timeout = 120 if step == "production" else 60
+    result = run_tool("gromacs_runner", payload, timeout_mins=timeout)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+
+    return {
+        "success": True,
+        "step": step,
+        "data": result.get("data", {}),
+    }
+
+
+def generate_molecules_sc2mol(
+    scaffolds: list[str],
+    num_sample: int | None = None,
+    ckpt: str = "sc2mol_smoke/ckpt-9",
+    max_len: int = 64,
+) -> dict:
+    """Generate molecules from scaffold SMILES using the Sc2Mol transformer model.
+
+    Sc2Mol is a scaffold-conditioned molecule generation model based on a
+    VAE-transformer architecture. Each input scaffold produces one output molecule.
+
+    Args:
+        scaffolds: List of scaffold SMILES strings (e.g., ["c1ccccc1", "C1CCCCC1"]).
+        num_sample: Number of scaffolds to use (default: all provided scaffolds).
+        ckpt: Checkpoint path relative to Sc2Mol/checkpoints/ (default "sc2mol_smoke/ckpt-9").
+        max_len: Maximum SMILES token length (default 64).
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "scaffold",
+            "checkpoint": str,
+            "num_scaffolds": int,
+            "num_sample_requested": int,
+            "num_sample_used": int,
+            "results": [
+              {"index": int, "input_scaffold": str, "smiles": str, ...},
+              ...
+            ],
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    if not scaffolds:
+        return {"success": False, "error": "scaffolds must be a non-empty list of SMILES strings"}
+
+    payload: dict = {
+        "scaffolds": scaffolds,
+        "ckpt": ckpt,
+        "max_len": max_len,
+    }
+    if num_sample is not None:
+        payload["num_sample"] = num_sample
+
+    result = run_tool("sc2mol", payload, timeout_mins=10)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+
+    summary = result.get("summary", {})
+    return {
+        "success": True,
+        "mode": "scaffold",
+        "checkpoint": summary.get("checkpoint", ckpt),
+        "num_scaffolds": summary.get("num_scaffolds"),
+        "num_sample_requested": summary.get("num_sample_requested"),
+        "num_sample_used": summary.get("num_sample_used"),
+        "results": result.get("results", []),
+    }
+
+
+def infer_synthesis_synllama(
+    smiles: list[str],
+    sample_mode: str = "frozen_only",
+    model: str = "91rxns",
+    gpus: int = 1,
+    max_molecules: int = 5,
+) -> dict:
+    """Infer synthesis pathways for target molecules using the SynLlama LLM model.
+
+    SynLlama is a language model trained on chemical synthesis data that predicts
+    possible synthetic routes for a given target molecule.
+
+    Args:
+        smiles: List of target molecule SMILES strings.
+        sample_mode: Sampling strategy (default "frozen_only").
+            Options: frozen_only, frugal, greedy, low_only, medium_only, high_only.
+        model: Model identifier (default "91rxns").
+        gpus: Number of GPUs to use (default 1).
+        max_molecules: Maximum number of molecules to process (default 5).
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "model": str,
+            "sample_mode": str,
+            "num_input_smiles": int,
+            "results": [
+              {"index": int, "smiles": str, "predictions": ...},
+              ...
+            ],
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    if not smiles:
+        return {"success": False, "error": "smiles must be a non-empty list of SMILES strings"}
+
+    payload = {
+        "smiles": smiles,
+        "sample_mode": sample_mode,
+        "model": model,
+        "gpus": gpus,
+        "max_molecules": max_molecules,
+    }
+    result = run_tool("synllama", payload, timeout_mins=15)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+
+    summary = result.get("summary", {})
+    return {
+        "success": True,
+        "model": summary.get("model", model),
+        "sample_mode": summary.get("sample_mode", sample_mode),
+        "num_input_smiles": summary.get("num_input_smiles"),
+        "results": result.get("results", []),
+    }
 
 
 def generate_scaffold_analogs(smiles: str, num_analogs: int = 10) -> dict:

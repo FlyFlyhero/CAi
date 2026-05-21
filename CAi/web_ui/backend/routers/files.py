@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -113,10 +114,11 @@ async def download_file(
         from starlette.responses import Response
         with open(fp, "rb") as f:
             content = f.read()
+        encoded_name = quote(filename)
         return Response(
             content=content,
             media_type=media_type,
-            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}"},
         )
     return FileResponse(fp, filename=filename, media_type=media_type)
 

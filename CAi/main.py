@@ -1,15 +1,15 @@
 """CAi — entry point.
 
 Reads configuration from CAi/config.py (which loads CAi/.env), builds
-an A1pro agent, and launches the Web UI. Provider auto-detection
-happens inside A1pro based on LLM_MODEL; override it by setting
-LLM_SOURCE in the .env file.
+an A1pro agent, and launches the Web UI or CLI REPL. Provider
+auto-detection happens inside A1pro based on LLM_MODEL; override it
+by setting LLM_SOURCE in the .env file.
 
 CLI usage examples:
-  python -m CAi.main
+  python -m CAi.main                          # Web UI (default)
   python -m CAi.main --port 9000
-  python -m CAi.main --model deepseek-chat --source Custom --base-url http://localhost:8080/v1
-  python -m CAi.main --port 7000 --model claude-opus-4-5 --temperature 0.3
+  python -m CAi.main --cli                    # Interactive CLI REPL
+  python -m CAi.main --cli --resume abc123    # Resume a conversation
 """
 
 # Silence a benign langgraph 0.6 deprecation notice about `allowed_objects`.
@@ -41,7 +41,7 @@ WEB_UI_PORT = 8888
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m CAi.main",
-        description="Launch the CAi Web UI.",
+        description="Launch the CAi Web UI or CLI REPL.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -68,6 +68,14 @@ def _parse_args() -> argparse.Namespace:
         "--temperature", type=float, default=LLM_TEMPERATURE,
         help="Sampling temperature.",
     )
+    parser.add_argument(
+        "--cli", action="store_true", default=False,
+        help="Start interactive CLI REPL instead of Web UI.",
+    )
+    parser.add_argument(
+        "--resume", default=None,
+        help="CLI mode: resume conversation by conv_id.",
+    )
     return parser.parse_args()
 
 
@@ -81,7 +89,12 @@ def _startup_summary(args: argparse.Namespace) -> None:
     print(f"  LLM_BASE_URL    = {args.base_url!r}")
     print(f"  LLM_API_KEY     = {'<set>' if args.api_key else '<EMPTY — requests will 401>'}")
     print(f"  LLM_TEMPERATURE = {args.temperature}")
-    print(f"  PORT            = {args.port}")
+    if args.cli:
+        print("  MODE            = CLI REPL")
+        if args.resume:
+            print(f"  RESUME          = {args.resume}")
+    else:
+        print(f"  PORT            = {args.port}")
     print("=" * 50)
 
 
@@ -115,7 +128,8 @@ def _check_port_free(port: int) -> None:
 def main() -> None:
     args = _parse_args()
     _startup_summary(args)
-    _check_port_free(args.port)
+    if not args.cli:
+        _check_port_free(args.port)
     try:
         agent = A1pro(
             llm=args.model,
@@ -137,8 +151,12 @@ def main() -> None:
         )
         raise
 
-    # Launch the Web UI (FastAPI + static frontend). See CAi/web_ui/launch.py.
-    agent.launch_web_ui(port=args.port)
+    if args.cli:
+        from CAi.cli import launch_cli
+        launch_cli(agent, resume_conv_id=args.resume)
+    else:
+        # Launch the Web UI (FastAPI + static frontend). See CAi/web_ui/launch.py.
+        agent.launch_web_ui(port=args.port)
 
 
 if __name__ == "__main__":

@@ -46,11 +46,13 @@ CODE EXECUTION ENVIRONMENT STATE:
 EXECUTION RULES:
 - Validate SMILES with RDKit before passing to tools.
 - Keep code simple. Break complex tasks into multiple rounds.
-- If code fails, analyze the error before retrying.
+- If code fails, analyze the error before retrying.**If a task fails 3 consecutive times, STOP and ask the user for help.**
+- CONTEXT ECONOMY (BASH): Never `cat` large files (PDBs, logs). Use `head`, `tail`, or `grep` to inspect. Redirect long tool outputs to `.log` files and review them selectively. 
 
 PLANNING (for multi-step tasks):
 - Start with a numbered plan. Mark steps [✓] or [✗] as you go.
 - Update the plan after each observation to reflect progress and next steps.
+- Leverage the environment: Use Bash for heavy CLI tools/simulations, and Python (`pandas`, `matplotlib`, RDKit) to parse and visualize those Bash outputs.
 
 COMPLETION:
 - After code execution, you MUST provide a text summary of the results in

@@ -1,0 +1,5 @@
+{
+  "name": "sc2mol",
+  "conda_env": "sc2mol",
+  "gpu": false
+}

@@ -22,7 +22,7 @@ def test_prompt_has_core_section(a1pro_agent):
 
 
 def test_prompt_without_tools_or_skills_is_compact(a1pro_agent):
-    agent, _ = a1pro_agent()
+    agent, _ = a1pro_agent(auto_load_utilities=False, auto_load_local_tools=False)
     sp = agent.system_prompt
     assert "AVAILABLE TOOLS" not in sp
     assert "SKILLS" not in sp

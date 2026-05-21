@@ -1,6 +1,6 @@
 {
 	"name": "libinvent",
-	"conda_env": "lib-invent",
+	"conda_env": "lib-invent-gpu",
 	"gpu": false,
 	"actions": {
 		"default": "run.py"

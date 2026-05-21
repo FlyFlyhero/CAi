@@ -26,6 +26,8 @@ dependencies = [
     # Utilities
     "python-dotenv>=1.0",
     "requests>=2.31",
+    "rich>=13.0",
+    "prompt_toolkit>=3.0",
     # Jupyter kernel for code execution (real process isolation + true timeout)
     "jupyter_client>=8.0",
     "ipykernel>=6.0",
@@ -122,6 +124,9 @@ asyncio_mode = "auto"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (requires kernel operations or real LLM)",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
