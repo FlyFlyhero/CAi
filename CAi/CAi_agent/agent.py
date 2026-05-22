@@ -57,6 +57,12 @@ class A1pro(BaseAgent):
         # Utilities
         auto_load_utilities: bool = True,
         utilities_dir: str | None = None,
+        # Curator LLM (UtilityManager) — overrides CURATOR_* env vars
+        curator_llm: str | None = None,
+        curator_source: str | None = None,
+        curator_base_url: str | None = None,
+        curator_api_key: str | None = None,
+        curator_temperature: float | None = None,
     ):
         # -------- Tool subsystem ---------------------------------------
         self.tool_registry = ToolRegistry()
@@ -102,6 +108,19 @@ class A1pro(BaseAgent):
             timeout_seconds=timeout_seconds,
             system_prompt="",  # overwritten right after by _rebuild_prompt
         )
+
+        # -------- Curator LLM (used by UtilityManager) ----------------
+        # Built lazily on first access so we don't pay the cost when
+        # utilities are disabled. ``self.curator_llm`` returns the same
+        # instance as ``self.llm`` when no CURATOR_* override is set.
+        self._curator_llm_args = {
+            "llm": curator_llm,
+            "source": curator_source,
+            "base_url": curator_base_url,
+            "api_key": curator_api_key,
+            "temperature": curator_temperature,
+        }
+        self._curator_llm_instance = None
 
         # -------- Prompt subsystem -------------------------------------
         # Section order matters: Utilities go BEFORE Tools so the agent
@@ -152,6 +171,69 @@ class A1pro(BaseAgent):
         from CAi.CAi_agent.execution.repl import inject_utilities_with_monitoring
 
         inject_utilities_with_monitoring(utilities)
+
+    @property
+    def curator_llm(self):
+        """Lazy-built LLM for UtilityManager / curator-class workloads.
+
+        Resolves overrides from constructor args first, then falls back
+        to ``CURATOR_*`` env vars (which themselves fall back to ``LLM_*``
+        in :mod:`CAi.config`). When the curator config matches the main
+        agent's, this returns ``self.llm`` directly to avoid spinning up
+        a redundant client.
+        """
+        if self._curator_llm_instance is not None:
+            return self._curator_llm_instance
+
+        from CAi.config import (
+            CURATOR_API_KEY,
+            CURATOR_BASE_URL,
+            CURATOR_MODEL,
+            CURATOR_SOURCE,
+            CURATOR_TEMPERATURE,
+            LLM_API_KEY,
+            LLM_BASE_URL,
+            LLM_MODEL,
+            LLM_SOURCE,
+        )
+
+        args = self._curator_llm_args
+        model = args["llm"] or CURATOR_MODEL
+        source = args["source"] if args["source"] is not None else CURATOR_SOURCE
+        base_url = args["base_url"] if args["base_url"] is not None else CURATOR_BASE_URL
+        api_key = args["api_key"] if args["api_key"] is not None else CURATOR_API_KEY
+        temperature = (
+            args["temperature"] if args["temperature"] is not None else CURATOR_TEMPERATURE
+        )
+
+        # If curator config matches the main agent's, reuse self.llm
+        # rather than building a second client.
+        same_as_main = (
+            model == LLM_MODEL
+            and source == LLM_SOURCE
+            and base_url == LLM_BASE_URL
+            and api_key == LLM_API_KEY
+        )
+        if same_as_main:
+            self._curator_llm_instance = self.llm
+            logger.debug("Curator LLM = main LLM (no override)")
+            return self._curator_llm_instance
+
+        from CAi.CAi_agent.llm import get_llm
+
+        self._curator_llm_instance = get_llm(
+            model,
+            temperature=temperature,
+            source=source,
+            base_url=base_url,
+            api_key=api_key,
+            # Don't inherit the agent's </execute> stop sequence — the
+            # curator prompt template contains that token in its JSON
+            # examples and must be allowed to emit it.
+            stop_sequences=None,
+        )
+        logger.info("Curator LLM ready: model=%s source=%s", model, source)
+        return self._curator_llm_instance
 
     def _on_utilities_changed(self) -> None:
         """Registry observer: refresh kernel namespace and prompt catalog."""

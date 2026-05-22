@@ -61,7 +61,7 @@ async def _trigger_maintenance(agent, raw_session_log: list[dict]) -> None:
 
         from CAi.CAi_agent.utilities import UtilityManager
 
-        manager = UtilityManager(registry, llm=agent.llm)
+        manager = UtilityManager(registry, llm=agent.curator_llm)
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, manager.maintain, raw_session_log)
     except Exception as e:

@@ -97,7 +97,7 @@ async def maintain(
 
     from CAi.CAi_agent.utilities import UtilityManager
 
-    manager = UtilityManager(registry, llm=agent.llm)
+    manager = UtilityManager(registry, llm=agent.curator_llm)
     loop = asyncio.get_event_loop()
 
     if request.mode == "preview":
@@ -185,27 +185,35 @@ async def delete_utility(name: str, agent=Depends(get_agent)):
 
 @router.get("/traces")
 async def list_traces(limit: int = 20, agent=Depends(get_agent)):
-    """List recent UtilityManager traces (LLM call history)."""
+    """List recent UtilityManager traces (LLM call history).
+
+    Read-only — no LLM call is made, so we don't need a configured curator
+    LLM here. Pass ``llm=None`` to skip lazy curator construction when
+    only traces are being browsed.
+    """
     registry = getattr(agent, "utility_registry", None)
     if registry is None:
         return {"traces": []}
 
     from CAi.CAi_agent.utilities import UtilityManager
 
-    manager = UtilityManager(registry, llm=agent.llm)
+    manager = UtilityManager(registry, llm=None)
     return {"traces": manager.list_traces(limit=limit)}
 
 
 @router.get("/traces/{filename}")
 async def get_trace(filename: str, agent=Depends(get_agent)):
-    """Fetch one trace by filename (full prompt + response + actions)."""
+    """Fetch one trace by filename (full prompt + response + actions).
+
+    Read-only — see :func:`list_traces` for why ``llm=None`` is fine here.
+    """
     registry = getattr(agent, "utility_registry", None)
     if registry is None:
         return {"error": "utilities disabled"}
 
     from CAi.CAi_agent.utilities import UtilityManager
 
-    manager = UtilityManager(registry, llm=agent.llm)
+    manager = UtilityManager(registry, llm=None)
     trace = manager.get_trace(filename)
     if trace is None:
         return {"error": "trace not found"}

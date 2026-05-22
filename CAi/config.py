@@ -11,6 +11,8 @@ Env vars read here:
   WEB_BACKEND_HOST / WEB_BACKEND_PORT
   WEB_FRONTEND_PORT
   LLM_MODEL / LLM_SOURCE / LLM_BASE_URL / LLM_API_KEY / LLM_TEMPERATURE
+  CURATOR_MODEL / CURATOR_SOURCE / CURATOR_BASE_URL / CURATOR_API_KEY
+      (override the LLM used by UtilityManager — defaults to LLM_*)
   OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY
       (read directly by CAi.CAi_agent.llm when LLM_SOURCE selects
        the corresponding provider)
@@ -47,7 +49,7 @@ WEB_FRONTEND_PORT = int(os.getenv("WEB_FRONTEND_PORT", "3000"))
 
 
 # =============================================================================
-# LLM
+# LLM — main agent
 # =============================================================================
 
 # Model identifier. Shape depends on LLM_SOURCE:
@@ -75,3 +77,23 @@ LLM_API_KEY = os.getenv("LLM_API_KEY") or None
 
 # Sampling temperature. Keep conservative for reproducibility.
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+
+
+# =============================================================================
+# LLM — curator (UtilityManager)
+# =============================================================================
+#
+# The UtilityManager performs a single classification-style LLM call to
+# decide whether a session's code should be saved/updated/deleted. This
+# is much cheaper work than the main agent's reasoning, so a smaller /
+# faster model is usually a better fit (e.g. gpt-4o-mini, deepseek-flash).
+#
+# Each CURATOR_* var falls back to its LLM_* counterpart when unset, so
+# the default behaviour is "use the same model as the main agent" — set
+# any subset of these to specialise.
+
+CURATOR_MODEL = os.getenv("CURATOR_MODEL") or LLM_MODEL
+CURATOR_SOURCE: str | None = os.getenv("CURATOR_SOURCE") or LLM_SOURCE
+CURATOR_BASE_URL = os.getenv("CURATOR_BASE_URL") or LLM_BASE_URL
+CURATOR_API_KEY = os.getenv("CURATOR_API_KEY") or LLM_API_KEY
+CURATOR_TEMPERATURE = float(os.getenv("CURATOR_TEMPERATURE", "0.2"))

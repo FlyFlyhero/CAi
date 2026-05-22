@@ -346,6 +346,15 @@ underperforming ones. Key rules:
   20+ sessions
 - Triggered asynchronously at session end (non-blocking)
 
+The curator runs on its own LLM, distinct from the main agent. A1pro
+exposes ``self.curator_llm`` (lazy-built) which all UtilityManager call
+sites use. By default the curator reuses ``self.llm`` so existing setups
+keep working unchanged. Set any of ``CURATOR_MODEL`` / ``CURATOR_SOURCE``
+/ ``CURATOR_BASE_URL`` / ``CURATOR_API_KEY`` / ``CURATOR_TEMPERATURE`` in
+``CAi/.env`` (or pass the matching ``curator_*`` constructor args) to
+specialise. Typical use: keep a strong model for the main agent and run
+the curator on a cheaper model.
+
 Robustness measures:
 - LLM is invoked with `bind(stop=None)` so the curator response isn't
   truncated when the prompt template contains `</execute>` examples
@@ -529,12 +538,21 @@ All user-facing configuration lives in `CAi/config.py`, loaded from environment
 variables (or a `CAi/.env` file):
 
 ```bash
+# Main agent LLM
 LLM_MODEL=claude-sonnet-4-5-20250929
 LLM_SOURCE=                        # auto-detect from model name if unset
 LLM_BASE_URL=http://your-endpoint/v1/
 LLM_API_KEY=your_key
 LLM_TEMPERATURE=0.7
 
+# Curator LLM (UtilityManager) — optional, falls back to LLM_* when unset
+CURATOR_MODEL=deepseek-v4-flash
+CURATOR_SOURCE=Custom
+CURATOR_BASE_URL=
+CURATOR_API_KEY=
+CURATOR_TEMPERATURE=0.2
+
+# Network
 TOOL_SERVER_HOST=0.0.0.0
 TOOL_SERVER_PORT=8001
 WEB_BACKEND_HOST=0.0.0.0
@@ -543,7 +561,8 @@ WEB_BACKEND_PORT=8000
 
 The CLI entry point (`python -m CAi.main`) accepts `--port`, `--model`,
 `--source`, `--base-url`, `--api-key`, and `--temperature` flags that
-override the env-var defaults at startup.
+override the env-var defaults at startup. Curator overrides are
+configured via env vars or directly via `A1pro(curator_llm=..., ...)`.
 
 ---
 
