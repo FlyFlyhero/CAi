@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -114,11 +113,10 @@ async def download_file(
         from starlette.responses import Response
         with open(fp, "rb") as f:
             content = f.read()
-        encoded_name = quote(filename)
         return Response(
             content=content,
             media_type=media_type,
-            headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}"},
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
         )
     return FileResponse(fp, filename=filename, media_type=media_type)
 
@@ -168,7 +166,7 @@ async def export_pdf(
     out_path = os.path.join(workspace_dir, filename)
 
     try:
-        export_conversation_to_pdf(conv, out_path)
+        export_conversation_to_pdf(conv, out_path, workspace_dir=workspace_dir)
     except EmptyConversation as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except PdfEngineUnavailable as e:

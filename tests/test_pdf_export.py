@@ -103,8 +103,8 @@ def test_render_basic_conversation():
     out = render_conversation_markdown(conv)
     assert out.startswith("# My chat")
     assert "2025-01-01T12:00:00" in out
-    assert "🧑 User" in out
-    assert "🤖 Assistant" in out
+    assert "## User" in out
+    assert "## Assistant" in out
     assert "Hello" in out
     assert "Hi there!" in out
 

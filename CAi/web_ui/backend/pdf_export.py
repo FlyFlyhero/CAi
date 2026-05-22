@@ -39,7 +39,10 @@ class EmptyConversation(ValueError):
 # ---------------------------------------------------------------------------
 
 
-def render_conversation_markdown(conv: dict[str, Any]) -> str:
+def render_conversation_markdown(
+    conv: dict[str, Any],
+    workspace_dir: str | None = None,
+) -> str:
     """Render a conversation dict as a Markdown document.
 
     Shape of `conv` (matches ConversationStore.get_conversation):
@@ -56,7 +59,8 @@ def render_conversation_markdown(conv: dict[str, Any]) -> str:
 
     Internal agent tags (<execute>, <observation>, <done/>) are reformatted:
       - <execute>...</execute>  → fenced code block
-      - <observation>...</observation> → "> Output:" blockquote
+      - <observation>...</observation> → "> Output:" blockquote (with embedded plots
+        when `workspace_dir` is given)
       - <done/>                → stripped
     """
     messages = conv.get("messages") or []
@@ -83,12 +87,12 @@ def render_conversation_markdown(conv: dict[str, Any]) -> str:
             continue
         ts = msg.get("timestamp", "")
 
-        header = "## 🧑 User" if role == "user" else "## 🤖 Assistant"
+        header = "## User" if role == "user" else "## Assistant"
         if ts:
             header += f"  _({ts})_"
         lines.append(header)
         lines.append("")
-        lines.append(_reformat_agent_tags(content))
+        lines.append(_reformat_agent_tags(content, workspace_dir=workspace_dir))
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -97,10 +101,16 @@ def render_conversation_markdown(conv: dict[str, Any]) -> str:
 _EXECUTE_RE = re.compile(r"<execute>(.*?)</execute>", re.DOTALL)
 _OBS_RE = re.compile(r"<observation>(.*?)</observation>", re.DOTALL)
 _DONE_RE = re.compile(r"<done\s*/?>")
+_IMAGE_LINE_RE = re.compile(r"\[Image saved\]:\s*(.+)", re.IGNORECASE)
 
 
-def _reformat_agent_tags(text: str) -> str:
-    """Convert internal <execute>/<observation>/<done> tags into Markdown."""
+def _reformat_agent_tags(text: str, workspace_dir: str | None = None) -> str:
+    """Convert internal <execute>/<observation>/<done> tags into Markdown.
+
+    If `workspace_dir` is provided, '[Image saved]: path' lines inside
+    observations are replaced with markdown image references so PDF export
+    can embed plots.
+    """
 
     def _code(match):
         code = match.group(1).strip()
@@ -117,9 +127,33 @@ def _reformat_agent_tags(text: str) -> str:
 
     def _obs(match):
         body = match.group(1).strip()
-        # Quote each line so it renders as an output block
-        quoted = "\n".join(f"> {line}" if line else ">" for line in body.split("\n"))
-        return f"\n**Output:**\n\n{quoted}\n"
+        out_lines: list[str] = []
+        text_buffer: list[str] = []
+
+        def flush_text():
+            if text_buffer:
+                quoted = "\n".join(
+                    f"> {line}" if line else ">" for line in text_buffer
+                )
+                out_lines.append(quoted)
+                text_buffer.clear()
+
+        for line in body.split("\n"):
+            img_match = _IMAGE_LINE_RE.match(line.strip())
+            if img_match and workspace_dir:
+                flush_text()
+                fname = os.path.basename(img_match.group(1).strip())
+                fpath = os.path.join(workspace_dir, fname)
+                if os.path.exists(fpath):
+                    # weasyprint accepts file:// URLs and absolute paths
+                    out_lines.append(f"\n![{fname}]({fpath.replace(os.sep, '/')})\n")
+                else:
+                    text_buffer.append(line)
+            else:
+                text_buffer.append(line)
+        flush_text()
+
+        return "\n**Output:**\n\n" + "\n".join(out_lines) + "\n"
 
     text = _EXECUTE_RE.sub(_code, text)
     text = _OBS_RE.sub(_obs, text)
@@ -134,13 +168,19 @@ def _reformat_agent_tags(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def export_conversation_to_pdf(conv: dict[str, Any], output_path: str) -> str:
+def export_conversation_to_pdf(
+    conv: dict[str, Any],
+    output_path: str,
+    workspace_dir: str | None = None,
+) -> str:
     """Render `conv` to Markdown, then convert to PDF at `output_path`.
 
     Returns the output path. Raises PdfEngineUnavailable if no PDF backend
     works, or EmptyConversation if the conversation has no messages.
+
+    `workspace_dir` enables embedded plot images in observation blocks.
     """
-    markdown_text = render_conversation_markdown(conv)
+    markdown_text = render_conversation_markdown(conv, workspace_dir=workspace_dir)
 
     # Write to a temp .md file — convert_markdown_to_pdf expects a path
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")

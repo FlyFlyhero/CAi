@@ -2,10 +2,11 @@
  * Application entry point.
  * Initializes DOM refs, binds events, and kicks off data loading.
  */
-import { $, state, dom, initDomRefs, safeCreateIcons, initTheme, toggleTheme, updateSendBtnState } from "./state.js?v=5";
-import { sendMessage, cancelGeneration } from "./chat.js?v=5";
-import { loadFiles, handleSidebarUpload, handleChatFileAttach, exportPdf, clearFiles, closeAllModals } from "./files.js?v=5";
-import { loadConversations, startNewConversation } from "./conversations.js?v=5";
+import { $, state, dom, initDomRefs, safeCreateIcons, initTheme, toggleTheme, updateSendBtnState } from "./state.js?v=7";
+import { sendMessage, cancelGeneration } from "./chat.js?v=7";
+import { loadFiles, handleSidebarUpload, handleChatFileAttach, exportPdf, clearFiles, closeAllModals } from "./files.js?v=7";
+import { loadConversations, startNewConversation } from "./conversations.js?v=7";
+import { loadUtilities, openPanel as openUtilitiesPanel } from "./utilities.js?v=7";
 
 // Initialize theme immediately (before DOMContentLoaded) to avoid flash
 initTheme();
@@ -32,6 +33,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     setupEventListeners();
     restoreSidebarState();
     loadFiles();
+    loadUtilities();
     await loadConversations();
 });
 
@@ -69,6 +71,9 @@ function setupEventListeners() {
     $("#toggleSidebar").addEventListener("click", toggleSidebar);
     $("#collapseSidebarBtn").addEventListener("click", collapseSidebar);
 
+    const utilBtn = document.getElementById("utilitiesBtn");
+    if (utilBtn) utilBtn.addEventListener("click", openUtilitiesPanel);
+
     const themeBtn = document.getElementById("themeToggleBtn");
     if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
 
@@ -104,6 +109,32 @@ function restoreSidebarState() {
     if (localStorage.getItem("cai-sidebar-collapsed") === "true") {
         $("#sidebar").classList.add("collapsed");
     }
+    // Restore section collapse states
+    initSectionToggles();
+}
+
+// ========== Section Collapse ==========
+function initSectionToggles() {
+    document.querySelectorAll(".section-toggle-btn").forEach((btn) => {
+        const section = btn.closest(".sidebar-section");
+        if (!section) return;
+        const key = section.dataset.section;
+
+        // Restore saved state
+        if (key && localStorage.getItem(`cai-section-${key}`) === "collapsed") {
+            section.classList.add("collapsed");
+            btn.setAttribute("aria-expanded", "false");
+        }
+
+        // Bind click
+        btn.addEventListener("click", () => {
+            const isCollapsed = section.classList.toggle("collapsed");
+            btn.setAttribute("aria-expanded", String(!isCollapsed));
+            if (key) {
+                localStorage.setItem(`cai-section-${key}`, isCollapsed ? "collapsed" : "expanded");
+            }
+        });
+    });
 }
 
 // ========== Welcome Hints ==========

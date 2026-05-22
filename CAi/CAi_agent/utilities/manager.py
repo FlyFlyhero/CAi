@@ -10,6 +10,8 @@ Every maintain()/preview() call writes a JSON trace to
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import json
 import logging
 import re
@@ -129,6 +131,26 @@ class UtilityManager:
         self._trace_dir = registry._dir / "_traces"
         self._trace_dir.mkdir(parents=True, exist_ok=True)
 
+    def _invoke_curator(self, prompt: str) -> str:
+        """Call the LLM for curation work, defensively isolating from
+        the main agent's stop sequences.
+
+        The maintain prompt template includes example tag tokens like
+        ``</execute>`` inside JSON examples. If the shared LLM was
+        configured with that as a stop sequence (BaseAgent does this),
+        the curator response gets truncated mid-JSON. We rebind stop
+        sequences to ``None`` for this single call.
+        """
+        llm = self._llm
+        try:
+            llm = self._llm.bind(stop=None)
+        except Exception:
+            # Some chat models don't support .bind(stop=...). Fall back
+            # to invoking as-is and hope the response survives.
+            llm = self._llm
+        response = llm.invoke(prompt)
+        return response.content if hasattr(response, "content") else str(response)
+
     def maintain(
         self,
         session_log: list[dict],
@@ -166,8 +188,7 @@ class UtilityManager:
             trace["prompt"] = prompt
             trace["library_before"] = self._registry.list_meta()
 
-            response = self._llm.invoke(prompt)
-            content = response.content if hasattr(response, "content") else str(response)
+            content = self._invoke_curator(prompt)
             trace["raw_response"] = content
 
             actions = self._parse_actions(content)
@@ -220,8 +241,7 @@ class UtilityManager:
             trace["prompt"] = prompt
             trace["library_before"] = self._registry.list_meta()
 
-            response = self._llm.invoke(prompt)
-            content = response.content if hasattr(response, "content") else str(response)
+            content = self._invoke_curator(prompt)
             trace["raw_response"] = content
 
             actions = self._parse_actions(content)
@@ -360,44 +380,161 @@ class UtilityManager:
     def _parse_actions(self, response: str) -> list[dict]:
         """Parse LLM response into action dicts.
 
-        Tries to find a JSON array in the response. Falls back to empty list
-        if parsing fails.
+        Tries three strategies, in order:
+          1. Direct ``json.loads`` on the whole response — works when the
+             LLM follows the spec and returns ONLY a JSON array.
+          2. JSON inside a markdown code fence (```json ... ```) — most
+             common when the LLM wraps its output for "readability".
+          3. Greedy regex match for the outermost ``[ ... ]`` — last
+             resort. Will fail if the array contains stray ``[`` or ``]``
+             outside of strings, but we accept that.
         """
+        if not response or not response.strip():
+            return []
+
+        text = response.strip()
+
+        # Strategy 1: maybe the model returned a clean JSON array.
         try:
-            # Look for [...] pattern in the response
-            match = re.search(r"\[.*\]", response, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-        except (json.JSONDecodeError, AttributeError):
+            data = json.loads(text)
+            if isinstance(data, list):
+                return data
+        except (json.JSONDecodeError, ValueError):
             pass
-        logger.warning("Failed to parse UtilityManager response")
+
+        # Strategy 2: extract from a markdown code fence.
+        fence_match = re.search(
+            r"```(?:json)?\s*(\[.*?\])\s*```",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if fence_match:
+            try:
+                data = json.loads(fence_match.group(1))
+                if isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # Strategy 3: greedy outermost array.
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group())
+                if isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        logger.warning("Failed to parse UtilityManager response as JSON array")
         return []
+
+    @staticmethod
+    def _is_valid_python(code: str, expected_function_name: str | None = None) -> tuple[bool, str]:
+        """Sanity-check a code blob before persisting it as a utility.
+
+        Checks (all static — no execution):
+          1. ``ast.parse`` succeeds (syntax is valid).
+          2. The code defines at least one top-level function.
+          3. If ``expected_function_name`` is given, that exact name exists.
+          4. Every top-level ``import`` / ``from ... import`` references a
+             module that ``importlib.util.find_spec`` can resolve. Imports
+             *inside* function bodies are skipped — those are commonly
+             optional fallbacks the agent wraps in try/except.
+
+        Returns:
+            (ok, error_message). ``error_message`` is empty when ``ok`` is True.
+        """
+        if not code or not code.strip():
+            return False, "code is empty"
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            return False, f"syntax error: {e}"
+
+        defined = {
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        }
+        if not defined:
+            return False, "no top-level function definition"
+        if expected_function_name and expected_function_name not in defined:
+            return False, (
+                f"expected function '{expected_function_name}' not found "
+                f"(defined: {sorted(defined)})"
+            )
+
+        # Best-effort import resolution. Only check top-level imports —
+        # in-function imports are often optional/lazy and would be unfair
+        # to reject statically.
+        for node in tree.body:
+            ok, err = UtilityManager._check_import_node(node)
+            if not ok:
+                return False, err
+
+        return True, ""
+
+    @staticmethod
+    def _check_import_node(node: ast.AST) -> tuple[bool, str]:
+        """Validate that the modules referenced by an import node exist.
+
+        Uses ``importlib.util.find_spec`` so we never actually execute the
+        target module's top-level code (which is what ``import`` would do).
+        Relative imports and unresolvable dotted paths are rejected.
+        """
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if not _module_exists(alias.name):
+                    return False, f"unknown module in import: {alias.name!r}"
+        elif isinstance(node, ast.ImportFrom):
+            if node.level and node.level > 0:
+                return False, (
+                    f"relative import not allowed in utilities (level={node.level})"
+                )
+            if node.module and not _module_exists(node.module):
+                return False, f"unknown module in 'from': {node.module!r}"
+        return True, ""
 
     def _apply_actions(self, actions: list[dict]) -> dict[str, list[str]]:
         """Dispatch save/update/delete actions to the registry.
 
-        Invalid or failed actions are logged and skipped.
+        For ``save`` and ``update``, the generated code is validated with
+        ``ast.parse`` and checked to actually define the named function
+        before being persisted. Invalid actions are logged with the reason
+        and recorded in the ``rejected`` bucket so callers can surface them.
         """
-        result: dict[str, list[str]] = {"saved": [], "updated": [], "deleted": []}
+        result: dict[str, list[str]] = {
+            "saved": [],
+            "updated": [],
+            "deleted": [],
+            "rejected": [],
+        }
         for action in actions:
             try:
                 atype = action.get("type")
                 name = action.get("name", "")
-                if atype == "save" and name:
-                    self._registry.save(
-                        name, action.get("code", ""), action.get("description", "")
-                    )
-                    result["saved"].append(name)
-                elif atype == "update" and name:
-                    self._registry.update(
-                        name, action.get("code", ""), action.get("description", "")
-                    )
-                    result["updated"].append(name)
+                if atype in ("save", "update") and name:
+                    code = action.get("code", "")
+                    ok, err = self._is_valid_python(code, expected_function_name=name)
+                    if not ok:
+                        logger.warning(
+                            "Rejected %s action for %r: %s", atype, name, err
+                        )
+                        result["rejected"].append(f"{atype}:{name} ({err})")
+                        continue
+                    if atype == "save":
+                        self._registry.save(name, code, action.get("description", ""))
+                        result["saved"].append(name)
+                    else:
+                        self._registry.update(name, code, action.get("description", ""))
+                        result["updated"].append(name)
                 elif atype == "delete" and name:
                     self._registry.delete(name)
                     result["deleted"].append(name)
             except Exception as e:
                 logger.warning("Failed to apply action %s: %s", action, e)
+                result["rejected"].append(f"{action.get('type')}:{action.get('name')} ({e})")
         return result
 
     # ------------------------------------------------------------------
@@ -483,3 +620,39 @@ def _new_trace(mode: str) -> dict:
         "mode": mode,
         "status": "running",
     }
+
+
+# Cache `find_spec` results — the same modules (rdkit, numpy, ...) get
+# checked over and over across many utility validations.
+_module_cache: dict[str, bool] = {}
+
+
+def _module_exists(dotted: str) -> bool:
+    """Return True if ``dotted`` is importable on this interpreter.
+
+    Uses ``importlib.util.find_spec`` so we don't actually run the
+    target module's top-level code. Sub-attributes after the first
+    importable parent (``foo.bar.Baz`` where ``foo.bar`` is a module
+    and ``Baz`` is a class) are accepted.
+    """
+    if not dotted:
+        return False
+    if dotted in _module_cache:
+        return _module_cache[dotted]
+
+    parts = dotted.split(".")
+    found = False
+    # Try progressively shorter prefixes — `find_spec("a.b.C")` raises
+    # if `a.b` exists as a module and `C` is just a class attribute.
+    for end in range(len(parts), 0, -1):
+        candidate = ".".join(parts[:end])
+        try:
+            if importlib.util.find_spec(candidate) is not None:
+                found = True
+                break
+        except (ImportError, ValueError, ModuleNotFoundError):
+            # find_spec can raise for partially broken parents. Try a
+            # shorter prefix.
+            continue
+    _module_cache[dotted] = found
+    return found

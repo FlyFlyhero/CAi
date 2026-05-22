@@ -7,7 +7,6 @@ CAi has a layered architecture designed around composition:
 ```
 BaseAgent  (execution core: LangGraph + LLM + REPL)
     │
-    ├── context_compression.py  (hybrid partition strategy for long conversations)
     └── A1pro  (orchestrator — wires everything below)
               ├── execution/   (Python REPL + bash + timeout helpers)
               ├── llm.py       (LLM factory — OpenAI / Anthropic / DeepSeek / Custom)
@@ -15,7 +14,6 @@ BaseAgent  (execution core: LangGraph + LLM + REPL)
               ├── tools/       (ToolRegistry + ReplBridge + Scanners)
               ├── utilities/   (UtilityRegistry + UtilityManager — self-learning code reuse)
               ├── skills/      (SkillLoader — SOP markdown files)
-              ├── cli/         (terminal REPL — theme, display, streaming, commands)
               └── web_ui/      (FastAPI + static frontend)
 ```
 
@@ -131,98 +129,6 @@ agent.run_with_history_streaming(prompt, history)    # streaming with prior conv
 The agent is stateless — history is passed explicitly per call.
 An optional `context_compress_hook` can be passed to `BaseAgent.__init__`
 to trim history when it grows large.
-
----
-
-## Context compression
-
-`CAi/CAi_agent/context_compression.py`
-
-When conversation history exceeds the `max_history_pairs` budget (default:
-40 pairs ≈ 80 messages), the default **hybrid partition** strategy (zero
-extra LLM calls) compresses history into three zones:
-
-| Zone | Region | Strategy |
-|------|--------|----------|
-| Zone 1 | Recent ~50% | Kept verbatim — coherent context for the current turn |
-| Zone 2 | Middle | Selectively keep high-score messages (score ≥ 6) |
-| Zone 3 | Oldest | Dropped, with a one-line summary notice prepended |
-
-**Scoring heuristic** (`_score_message`):
-
-| Message type | Base score | Bonus |
-|-------------|-----------|-------|
-| User message | 10 | +5 if contains domain keywords (SMILES, .pdb, score, etc.) |
-| Assistant + `<observation>` | 8 | (factual tool results) |
-| Assistant + domain keywords | 6 | |
-| Assistant + `<execute>` | 5 | |
-| Assistant plain reasoning | 2 | (safe to drop) |
-
-Users can swap in a custom strategy (e.g. LLM-based summarisation) via
-`BaseAgent.__init__(context_compress_hook=...)`. The hook signature is
-`(history: list[dict]) -> list[dict]`. On failure the system falls back
-to `hybrid_compress`.
-
----
-
-## CLI
-
-`CAi/cli/`
-
-Interactive terminal REPL for the agent. Refactored from a single-file
-`cli.py` into a modular package:
-
-```
-cli/
-├── __init__.py     # Exports launch_cli
-├── app.py          # Entry point — launch_cli(), repl_loop()
-├── commands.py     # Command dispatcher (:quit, :help, :load, :retry, etc.)
-├── display.py      # Output formatting (banner, panels, tables, history)
-├── input.py        # prompt_toolkit session, multiline mode, bracket detection
-├── session.py      # Conversation load/save/append via ConversationStore
-├── streaming.py    # Stream agent events → terminal (token/observation/code)
-└── theme.py        # Rich console theme (deep space + neon accents)
-```
-
-### REPL flow
-
-```
-launch_cli(agent)
-    │
-    ├── set_workspace_dir() + ConversationStore
-    ├── init session (new or --resume)
-    │
-    └── repl_loop()
-          ├── prompt_toolkit prompt (with command completer)
-          ├── command dispatch (:quit, :help, :load, :ml, :retry, …)
-          ├── stream_response() — consume agent.run_with_history_streaming()
-          │     ├── token    → print inline (filter <execute> tags)
-          │     ├── observation → Rich panel
-          │     └── message_end → persist turn + flush utility usage
-          └── Ctrl+C → StreamingInterrupted (partial save)
-```
-
-### Supported commands
-
-| Command | Action |
-|---------|--------|
-| `:quit` / `:q` | Exit session |
-| `:help` / `:h` | Show command help |
-| `:new` | Start new conversation |
-| `:convs` | List saved conversations |
-| `:load <id>` | Load a conversation |
-| `:ml` | Multi-line input mode (Esc+Enter to submit) |
-| `:retry` | Retry last user message |
-| `:history [n]` | Show last n turns |
-| `:last_obs` | Show last execution output in full |
-| `:tools` | List loaded tools |
-| `:rename <title>` | Rename current session |
-| `:forget` | Clear conversation memory (keep session) |
-| `:delete` | Delete session & start new |
-| `:reset-kernel` | Reset REPL kernel |
-| `:clear` | Clear terminal screen |
-
-Launched via `python -m CAi.main --cli` (optionally `--resume <conv_id>`).
 
 ---
 
@@ -377,7 +283,12 @@ Disk ↔ memory bridge. Thread-safe (RLock). Provides:
 - `load_snapshot()` — exec each utility, return `{name: callable}` dict
 - `apply_usage(stats)` — update call/success counts after session
 - `save()` / `update()` / `delete()` — CRUD for UtilityManager
-- Enforces a configurable max (default: 20), evicts least-used on overflow
+- `on_change(callback)` — observer protocol (mirrors ToolRegistry).
+  A1pro subscribes so newly-saved utilities are re-injected into the
+  live kernel without restart.
+- Enforces a configurable max (default: 20). When the directory contains
+  more files than the limit on load, the LRU files are deleted from disk
+  (not just hidden in memory) so we don't accumulate stale `.py` files.
 
 ### UtilitiesSection
 
@@ -406,6 +317,23 @@ underperforming ones. Key rules:
 - DELETE candidates: success_rate < 0.5 over 10+ calls, or unused for
   20+ sessions
 - Triggered asynchronously at session end (non-blocking)
+
+Robustness measures:
+- LLM is invoked with `bind(stop=None)` so the curator response isn't
+  truncated when the prompt template contains `</execute>` examples
+  (the main agent's stop sequence).
+- Generated code is validated statically before persistence:
+  - `ast.parse` for syntax
+  - the named function actually exists at top level
+  - all top-level `import` / `from ... import` references resolve via
+    `importlib.util.find_spec` (in-function imports are skipped — they
+    are commonly optional/lazy and wrapped in try/except).
+  Rejected actions are reported in a `rejected` bucket alongside
+  `saved/updated/deleted`.
+- JSON parsing tries direct, fenced, and bare-array strategies in order
+  so curator responses formatted slightly differently still apply.
+- Every maintain/preview call writes a JSON trace to
+  `<utilities_dir>/_traces/` for debugging.
 
 ### Storage layout
 
@@ -470,7 +398,7 @@ web_ui/
 │       └── workspace.py        # DELETE /api/workspace, POST /api/reset
 ├── frontend/
 │   ├── index.html
-│   ├── js/                     # ES modules: main, chat, conversations, files, state
+│   ├── js/                     # ES modules: main, chat, conversations, files, utilities, state
 │   └── styles.css
 └── launch.py                   # uvicorn launcher + SPA catch-all routing
 ```
@@ -515,6 +443,11 @@ See `docs/web_ui_backend.md` for the full design rationale.
 | `POST` | `/api/reset` | Full reset |
 | `POST` | `/api/export-pdf` | Export conversation to PDF |
 | `POST` | `/api/utilities/maintain` | Manually trigger utility maintenance |
+| `GET` | `/api/utilities/list` | List learned utilities (with status badges) |
+| `GET` | `/api/utilities/detail/{name}` | Full data + source code for one utility |
+| `DELETE` | `/api/utilities/detail/{name}` | Remove a utility from the library |
+| `GET` | `/api/utilities/traces` | Recent UtilityManager LLM call traces |
+| `GET` | `/api/utilities/traces/{filename}` | One trace (full prompt + response) |
 | `GET` | `/api/health` | Health check |
 
 ### Chat flow

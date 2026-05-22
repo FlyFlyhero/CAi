@@ -2,6 +2,10 @@
 
 Provides snapshot loading, usage stats persistence, and CRUD operations
 with automatic max_utilities enforcement and _meta.json rebuilding.
+
+Observable: register an ``on_change`` callback to be notified after any
+mutation (save/update/delete/apply_usage). Used by A1pro to re-inject
+freshly-saved utilities into the live kernel without restarting.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ class UtilityRegistry:
         self._dir = Path(utilities_dir)
         self._max = max_utilities
         self._specs: dict[str, UtilitySpec] = {}
+        self._listeners: list[Callable[[], None]] = []
         self._lock = RLock()
         self._dir.mkdir(parents=True, exist_ok=True)
         self._load_specs()
@@ -38,7 +43,13 @@ class UtilityRegistry:
     # ------------------------------------------------------------------
 
     def _load_specs(self) -> None:
-        """Scan directory, parse all .py files into UtilitySpec."""
+        """Scan directory, parse all .py files into UtilitySpec.
+
+        If the directory contains more files than ``max_utilities``, the
+        excess (least-recently-used) files are deleted from disk so the
+        invariant ``len(self._specs) <= self._max`` always holds and we
+        don't slowly accumulate stale files across restarts.
+        """
         with self._lock:
             self._specs.clear()
             for f in sorted(self._dir.glob("*.py")):
@@ -47,14 +58,21 @@ class UtilityRegistry:
                     self._specs[spec.name] = spec
                 except Exception as e:
                     logger.warning("Skipping malformed utility %s: %s", f.name, e)
-            # Enforce max: keep most-recently-used
+            # Enforce max: keep most-recently-used and DELETE the rest from disk.
             if len(self._specs) > self._max:
                 sorted_specs = sorted(
                     self._specs.values(),
                     key=lambda s: s.last_used or s.created_at or datetime.min,
                     reverse=True,
                 )
+                evicted = sorted_specs[self._max:]
                 self._specs = {s.name: s for s in sorted_specs[: self._max]}
+                for spec in evicted:
+                    try:
+                        spec.delete_file(self._dir)
+                        logger.info("Evicted stale utility on load: %s", spec.name)
+                    except Exception as e:
+                        logger.warning("Failed to evict %s: %s", spec.name, e)
 
     # ------------------------------------------------------------------
     # A1pro interface — session start
@@ -95,10 +113,12 @@ class UtilityRegistry:
         Unknown utility names are silently ignored.
         """
         with self._lock:
+            touched = False
             for name, stats in usage.items():
                 spec = self._specs.get(name)
                 if spec is None:
                     continue
+                touched = True
                 calls = stats.get("calls", 0)
                 errors = stats.get("errors", 0)
                 updated = UtilitySpec(
@@ -112,7 +132,10 @@ class UtilityRegistry:
                 )
                 updated.to_file(self._dir)
                 self._specs[name] = updated
-            self._rebuild_meta()
+            if touched:
+                self._rebuild_meta()
+        if touched:
+            self._notify()
 
     # ------------------------------------------------------------------
     # UtilityManager interface — CRUD
@@ -135,6 +158,7 @@ class UtilityRegistry:
             spec.to_file(self._dir)
             self._specs[name] = spec
             self._rebuild_meta()
+        self._notify()
 
     def update(self, name: str, code: str, description: str) -> None:
         """Update an existing utility's code and description, preserving stats."""
@@ -152,6 +176,7 @@ class UtilityRegistry:
             spec.to_file(self._dir)
             self._specs[name] = spec
             self._rebuild_meta()
+        self._notify()
 
     def delete(self, name: str) -> None:
         """Delete a utility from disk and memory."""
@@ -160,6 +185,8 @@ class UtilityRegistry:
             if spec:
                 spec.delete_file(self._dir)
                 self._rebuild_meta()
+        if spec:
+            self._notify()
 
     def list_meta(self) -> list[dict]:
         """Return summary dicts for UtilityManager prompt building."""
@@ -198,6 +225,33 @@ class UtilityRegistry:
             }
         meta_path = self._dir / "_meta.json"
         meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # Observer protocol — mirrors ToolRegistry
+    # ------------------------------------------------------------------
+
+    def on_change(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Subscribe a callback invoked after any mutating operation.
+
+        Returns an unsubscribe function. Listener exceptions are logged
+        but do not prevent other listeners from running.
+        """
+        self._listeners.append(callback)
+
+        def _unsubscribe() -> None:
+            try:
+                self._listeners.remove(callback)
+            except ValueError:
+                pass
+
+        return _unsubscribe
+
+    def _notify(self) -> None:
+        for cb in list(self._listeners):
+            try:
+                cb()
+            except Exception:
+                logger.exception("Utility registry listener raised — continuing")
 
     # ------------------------------------------------------------------
     # Properties and dunder methods

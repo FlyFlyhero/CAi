@@ -153,8 +153,8 @@ export function applyTheme(theme) {
     const hljsLink = document.getElementById("hljs-theme");
     if (hljsLink) {
         hljsLink.href = theme === "dark"
-            ? "https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css"
-            : "https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css";
+            ? "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+            : "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css";
     }
 }
 

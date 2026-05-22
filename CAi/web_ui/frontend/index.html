@@ -12,8 +12,10 @@
     <!-- Markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- Code highlighting (loaded dynamically based on theme) -->
-    <link rel="stylesheet" id="hljs-theme" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/highlight.min.js"></script>
+    <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
     <!-- Lucide icons -->
     <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
@@ -43,47 +45,60 @@
             </div>
 
             <!-- Conversations Panel -->
-            <div class="sidebar-section sidebar-conversations">
-                <div class="section-header">
-                    <div class="section-title">
-                        <i data-lucide="message-square"></i>
-                        <span>会话</span>
-                    </div>
+            <div class="sidebar-section sidebar-conversations" data-section="conversations">
+                <div class="section-header section-header-toggle">
+                    <button class="section-toggle-btn" type="button" aria-expanded="true" aria-controls="conversationList">
+                        <i data-lucide="chevron-down" class="section-chevron"></i>
+                        <div class="section-title">
+                            <i data-lucide="message-square"></i>
+                            <span>会话</span>
+                        </div>
+                    </button>
                     <button class="btn btn-sm btn-new-conv" id="newConvBtn" title="新建会话">
                         <i data-lucide="plus"></i>
                         <span>新建</span>
                     </button>
                 </div>
-                <div class="conversation-list" id="conversationList">
+                <div class="conversation-list section-body" id="conversationList">
                     <div class="conv-empty">💬 暂无会话</div>
                 </div>
             </div>
 
             <!-- File Panel -->
-            <div class="sidebar-section sidebar-files">
-                <div class="section-header">
-                    <div class="section-title">
-                        <i data-lucide="folder"></i>
-                        <span>工作区</span>
-                    </div>
+            <div class="sidebar-section sidebar-files" data-section="files">
+                <div class="section-header section-header-toggle">
+                    <button class="section-toggle-btn" type="button" aria-expanded="true" aria-controls="fileList">
+                        <i data-lucide="chevron-down" class="section-chevron"></i>
+                        <div class="section-title">
+                            <i data-lucide="folder"></i>
+                            <span>工作区</span>
+                        </div>
+                    </button>
                     <button class="btn-icon btn-sm" id="refreshFilesBtn" title="刷新">
                         <i data-lucide="refresh-cw"></i>
                     </button>
                 </div>
-                <div class="file-list" id="fileList">
-                    <div class="file-empty">📂 暂无文件</div>
-                </div>
-                <div class="file-actions">
-                    <label class="btn btn-sm btn-outline upload-label" for="fileUploadInput">
-                        <i data-lucide="upload"></i>
-                        <span>上传文件</span>
-                    </label>
-                    <input type="file" id="fileUploadInput" multiple hidden>
+                <div class="section-body files-section-body">
+                    <div class="file-list" id="fileList">
+                        <div class="file-empty">📂 暂无文件</div>
+                    </div>
+                    <div class="file-actions">
+                        <label class="btn btn-sm btn-outline upload-label" for="fileUploadInput">
+                            <i data-lucide="upload"></i>
+                            <span>上传文件</span>
+                        </label>
+                        <input type="file" id="fileUploadInput" multiple hidden>
+                    </div>
                 </div>
             </div>
 
             <!-- Bottom Actions -->
             <div class="sidebar-footer">
+                <button class="btn btn-sm btn-ghost util-trigger-btn" id="utilitiesBtn" style="display:none" title="查看 agent 已学到的能力">
+                    <i data-lucide="brain"></i>
+                    <span class="btn-text">已学能力</span>
+                    <span class="util-count" aria-hidden="true">0</span>
+                </button>
                 <button class="btn btn-sm btn-ghost" id="exportPdfBtn" title="导出当前会话为 PDF">
                     <i data-lucide="file-down"></i>
                     <span class="btn-text">导出 PDF</span>
@@ -219,6 +234,6 @@
         <div class="maintenance-popup-result" id="maintenanceResult" style="display:none;"></div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=5"></script>
+    <script type="module" src="/static/js/main.js?v=7"></script>
 </body>
 </html>

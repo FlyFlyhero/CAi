@@ -5,9 +5,10 @@ import {
     state, dom,
     escapeHtml, renderMarkdown, safeHighlight, scrollToBottom, showToast,
     updateSendBtnState,
-} from "./state.js?v=5";
-import { loadFiles } from "./files.js?v=5";
-import { loadConversations } from "./conversations.js?v=5";
+} from "./state.js?v=7";
+import { loadFiles } from "./files.js?v=7";
+import { loadConversations } from "./conversations.js?v=7";
+import { loadUtilities } from "./utilities.js?v=7";
 
 // ========== Copy Helpers ==========
 
@@ -209,6 +210,7 @@ export async function sendMessage() {
         updateSendBtnState();
         loadFiles();
         loadConversations();
+        loadUtilities();
     }
 }
 
@@ -257,10 +259,22 @@ export function addMessage(role, content, isStreaming = false) {
     return msgEl;
 }
 
+// Track code execution start times per message element
+const _codeTimers = new WeakMap();
+
 export function renderStreamingMessage(msgEl, fullContent, isStreaming = false) {
     const body = msgEl.querySelector(".message-body");
     const segments = parseSegments(fullContent);
     let html = "";
+
+    // Manage execution timers
+    if (!_codeTimers.has(msgEl)) {
+        _codeTimers.set(msgEl, { starts: [], ends: [] });
+    }
+    const timers = _codeTimers.get(msgEl);
+
+    // Count code segments to track timing
+    let codeIdx = 0;
 
     segments.forEach((seg, i) => {
         const isLast = i === segments.length - 1;
@@ -273,16 +287,40 @@ export function renderStreamingMessage(msgEl, fullContent, isStreaming = false) 
                 html += `<div class="solution-content">${renderMarkdown(seg.content)}</div>`;
             }
         } else if (seg.type === "code") {
-            const status = inProgress ? `${statusRun} 执行中...` : statusOK;
+            // Record start time for this code block
+            if (!timers.starts[codeIdx]) {
+                timers.starts[codeIdx] = Date.now();
+            }
+
+            let timeStr = "";
+            if (inProgress) {
+                // Show live elapsed time
+                const elapsed = ((Date.now() - timers.starts[codeIdx]) / 1000).toFixed(1);
+                timeStr = ` <span class="exec-time">(${elapsed}s)</span>`;
+            } else if (timers.ends[codeIdx]) {
+                // Show final elapsed time
+                const elapsed = ((timers.ends[codeIdx] - timers.starts[codeIdx]) / 1000).toFixed(1);
+                timeStr = ` <span class="exec-time">(${elapsed}s)</span>`;
+            }
+
+            const status = inProgress ? `${statusRun} 执行中...${timeStr}` : `${statusOK}${timeStr}`;
             const lang = detectCodeLanguage(seg.content);
+            const highlighted = highlightCode(seg.content, lang);
             html += buildCollapsible(
                 `💻 执行代码${status}`,
-                `<pre><code class="language-${lang}">${escapeHtml(seg.content)}</code></pre>`,
+                `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`,
                 "code",
                 inProgress,
                 true,
             );
+            codeIdx++;
         } else if (seg.type === "observation") {
+            // Mark the previous code block as finished
+            const prevCodeIdx = codeIdx - 1;
+            if (prevCodeIdx >= 0 && !timers.ends[prevCodeIdx]) {
+                timers.ends[prevCodeIdx] = Date.now();
+            }
+
             // Extract image paths and render them as <img> tags
             const obsContent = seg.content;
             const imageLines = [];
@@ -312,6 +350,15 @@ export function renderStreamingMessage(msgEl, fullContent, isStreaming = false) 
         }
     });
 
+    // If streaming ended, mark any unfinished code blocks
+    if (!isStreaming) {
+        for (let i = 0; i < timers.starts.length; i++) {
+            if (timers.starts[i] && !timers.ends[i]) {
+                timers.ends[i] = Date.now();
+            }
+        }
+    }
+
     if (isStreaming) {
         html += '<div class="streaming-indicator"><span class="streaming-dot"></span><span class="streaming-dot"></span><span class="streaming-dot"></span></div>';
     }
@@ -323,7 +370,8 @@ export function renderStreamingMessage(msgEl, fullContent, isStreaming = false) 
     }
 
     body.innerHTML = html;
-    body.querySelectorAll("pre code").forEach((block) => safeHighlight(block));
+    // Apply syntax highlighting to any code blocks that weren't pre-highlighted
+    body.querySelectorAll("pre code[class*='language-']:not(.hljs)").forEach((block) => safeHighlight(block));
     // Store raw content so the copy button can extract clean plain text
     if (!isStreaming) {
         msgEl.dataset.content = fullContent;
@@ -386,6 +434,27 @@ function detectCodeLanguage(code) {
     if (/^#!\s*\/(?:usr\/(?:local\/)?bin\/(?:env\s+)?)?(?:bash|sh|zsh)/m.test(code)) return "bash";
     if (/^(?:apt(?:-get)?|yum|pip(?:3)?|conda|brew|ls|cd|mkdir|cp|mv|rm|chmod|grep|find|cat|echo|export|source|curl|wget|git|docker)\s/m.test(code)) return "bash";
     return "python";
+}
+
+// Pre-highlight code synchronously using hljs and return HTML string.
+// Falls back to escaped plain text if hljs isn't loaded yet.
+function highlightCode(code, lang) {
+    try {
+        if (typeof hljs === "undefined") return escapeHtml(code);
+
+        // First try the requested language
+        if (hljs.getLanguage && hljs.getLanguage(lang)) {
+            const result = hljs.highlight(code, { language: lang, ignoreIllegals: true });
+            if (result && result.value) return result.value;
+        }
+
+        // Fallback to auto-detection (good when language pack isn't registered)
+        if (hljs.highlightAuto) {
+            const auto = hljs.highlightAuto(code);
+            if (auto && auto.value) return auto.value;
+        }
+    } catch (_) { /* fall through */ }
+    return escapeHtml(code);
 }
 
 function buildCollapsible(title, content, _type, defaultOpen = false, isRaw = false) {
@@ -466,6 +535,7 @@ async function handleMaintenanceAction(mode) {
             if (data.saved?.length) parts.push(`💾 保存: ${data.saved.join(", ")}`);
             if (data.updated?.length) parts.push(`🔄 更新: ${data.updated.join(", ")}`);
             if (data.deleted?.length) parts.push(`🗑️ 删除: ${data.deleted.join(", ")}`);
+            if (data.rejected?.length) parts.push(`⚠ 拒绝: ${data.rejected.join("; ")}`);
 
             if (parts.length > 0) {
                 resultEl.innerHTML = parts.map(p => `<div class="result-item">${p}</div>`).join("");

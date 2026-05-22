@@ -144,6 +144,12 @@ async def chat(
                 cancel_ev = asyncio.Event()
                 cancel_events[conv_id] = cancel_ev
 
+                # Collect all message_end + observation events in order, so we
+                # can persist the full reasoning trace (not just the final
+                # summary). This lets PDF export and conversation hydration
+                # see all intermediate steps.
+                full_trace_parts: list[str] = []
+
                 try:
                     async for step in async_iter_agent(agent, agent_prompt, history, cancel_ev):
                         ev_type = step.get("type")
@@ -153,16 +159,26 @@ async def chat(
                             yield f"data: {json.dumps({'type': 'token', 'content': ev_content}, ensure_ascii=False)}\n\n"
                         elif ev_type == "message_end":
                             last_full_message = ev_content
+                            full_trace_parts.append(ev_content)
                             raw_session_log.append({"type": "message_end", "content": ev_content})
                             yield f"data: {json.dumps({'type': 'message_end', 'content': ev_content}, ensure_ascii=False)}\n\n"
                         elif ev_type == "observation":
+                            full_trace_parts.append(ev_content)
                             raw_session_log.append({"type": "observation", "content": ev_content})
                             yield f"data: {json.dumps({'type': 'observation', 'content': ev_content}, ensure_ascii=False)}\n\n"
                 finally:
                     cancel_events.pop(conv_id, None)
 
-                stored_answer = clean_stored_answer(last_full_message) or last_full_message
-                yield f"data: {json.dumps({'type': 'solution', 'content': stored_answer}, ensure_ascii=False)}\n\n"
+                # Build the persisted answer from the full trace, not just the
+                # last message. Keep <execute>/<observation> tags so the
+                # frontend renderer and PDF export can reconstruct steps.
+                full_trace = "\n".join(full_trace_parts).strip() or last_full_message
+                stored_answer = full_trace
+                # The "solution" event is purely for the live UI, which already
+                # rendered everything via streaming tokens. Send a cleaned
+                # plain-text version to avoid re-rendering noise.
+                solution_for_ui = clean_stored_answer(last_full_message) or last_full_message
+                yield f"data: {json.dumps({'type': 'solution', 'content': solution_for_ui}, ensure_ascii=False)}\n\n"
 
                 display_message = request.message
                 if request.file_refs:

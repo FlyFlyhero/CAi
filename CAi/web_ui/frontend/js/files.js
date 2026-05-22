@@ -5,7 +5,7 @@ import {
     state, dom, $,
     escapeHtml, getFileIcon, formatFileSize, renderMarkdown,
     safeHighlight, showToast, updateSendBtnState,
-} from "./state.js?v=5";
+} from "./state.js?v=7";
 
 // ========== Load & Render ==========
 

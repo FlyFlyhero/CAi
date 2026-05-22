@@ -4,8 +4,8 @@
 import {
     state, dom,
     escapeHtml, formatDate, showToast,
-} from "./state.js?v=5";
-import { addMessage, updateAIMessage } from "./chat.js?v=5";
+} from "./state.js?v=7";
+import { addMessage, updateAIMessage } from "./chat.js?v=7";
 
 // ========== Load & Render ==========
 

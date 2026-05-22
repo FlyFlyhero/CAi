@@ -24,13 +24,6 @@ from CAi.CAi_agent.prompt import (
 )
 from CAi.CAi_agent.skills import SkillLoader
 from CAi.CAi_agent.tools import ModuleScanner, ReplBridge, ToolRegistry, ToolSpec
-from CAi.config import (
-    LLM_API_KEY,
-    LLM_BASE_URL,
-    LLM_MODEL,
-    LLM_SOURCE,
-    LLM_TEMPERATURE,
-)
 from CAi.logger import get_logger
 
 logger = get_logger("CAi.A1pro")
@@ -64,22 +57,7 @@ class A1pro(BaseAgent):
         # Utilities
         auto_load_utilities: bool = True,
         utilities_dir: str | None = None,
-        # Local CLI Tools
-        auto_load_local_tools: bool = True,
-        local_tools_dir: str | None = None,
     ):
-        # Fall back to global config when LLM params are not given
-        if llm is None:
-            llm = LLM_MODEL
-        if source is None:
-            source = LLM_SOURCE
-        if base_url is None:
-            base_url = LLM_BASE_URL
-        if api_key is None:
-            api_key = LLM_API_KEY
-        if temperature is None:
-            temperature = LLM_TEMPERATURE
-
         # -------- Tool subsystem ---------------------------------------
         self.tool_registry = ToolRegistry()
         self.repl_bridge = ReplBridge(self.tool_registry)
@@ -109,23 +87,10 @@ class A1pro(BaseAgent):
             self.utility_registry = UtilityRegistry(util_dir)
 
             # Inject into REPL with monitoring
-            utilities = self.utility_registry.load_snapshot()
-            if utilities:
-                from CAi.CAi_agent.execution.repl import inject_utilities_with_monitoring
-
-                inject_utilities_with_monitoring(utilities)
-
-        # -------- Local CLI tools --------------------------------------
-        self.local_tools_loader = None
-        if auto_load_local_tools:
-            from CAi.CAi_agent.local_tools import LocalToolsLoader
-
-            lt_dir = (
-                Path(local_tools_dir)
-                if local_tools_dir
-                else Path("agent_workspace/_local_tools")
-            )
-            self.local_tools_loader = LocalToolsLoader(lt_dir)
+            self._reinject_utilities()
+            # Re-inject + rebuild prompt whenever the library mutates
+            # (UtilityManager save/update/delete, Web UI delete, etc.).
+            self.utility_registry.on_change(self._on_utilities_changed)
 
         # -------- Base agent (builds LLM + workflow) -------------------
         super().__init__(
@@ -148,10 +113,6 @@ class A1pro(BaseAgent):
             builder.add(UtilitiesSection(self.utility_registry))
         builder.add(ToolsSection(self.tool_registry))
         builder.add(SkillsSection(self.skill_loader, self.exclude_skills))
-        # Local CLI tools (after Skills — supplementary info)
-        from CAi.CAi_agent.local_tools import LocalToolsSection
-
-        builder.add(LocalToolsSection(self.local_tools_loader))
         self.prompt_builder = builder
 
         # Registry → prompt: auto-rebuild whenever tools change.
@@ -159,11 +120,10 @@ class A1pro(BaseAgent):
         self._rebuild_prompt()
 
         logger.info(
-            "A1pro ready — %d tools, %d skills, %d utilities, %d local tools",
+            "A1pro ready — %d tools, %d skills, %d utilities",
             len(self.tool_registry),
             len(self.list_skills()),
             len(self.utility_registry) if self.utility_registry else 0,
-            len(self.local_tools_loader) if self.local_tools_loader else 0,
         )
 
     # ------------------------------------------------------------------
@@ -172,6 +132,37 @@ class A1pro(BaseAgent):
 
     def _rebuild_prompt(self) -> None:
         self.system_prompt = self.prompt_builder.build()
+
+    # ------------------------------------------------------------------
+    # Utility lifecycle
+    # ------------------------------------------------------------------
+
+    def _reinject_utilities(self) -> None:
+        """(Re-)load utilities from the registry into the live kernel.
+
+        Called once at startup and again whenever the library mutates so
+        newly-saved utilities are immediately callable from the REPL —
+        no agent restart required.
+        """
+        if self.utility_registry is None:
+            return
+        utilities = self.utility_registry.load_snapshot()
+        if not utilities:
+            return
+        from CAi.CAi_agent.execution.repl import inject_utilities_with_monitoring
+
+        inject_utilities_with_monitoring(utilities)
+
+    def _on_utilities_changed(self) -> None:
+        """Registry observer: refresh kernel namespace and prompt catalog."""
+        try:
+            self._reinject_utilities()
+        except Exception:
+            logger.exception("Failed to re-inject utilities after registry change")
+        # The UtilitiesSection reads from registry.specs, so prompt content
+        # stays current automatically — but we still need to rebuild the
+        # cached system_prompt string.
+        self._rebuild_prompt()
 
     # ------------------------------------------------------------------
     # Tool API (backward compatible)
@@ -226,25 +217,6 @@ class A1pro(BaseAgent):
         self.skill_loader.reload()
         self._rebuild_prompt()
         logger.info("Skills reloaded")
-
-    # ------------------------------------------------------------------
-    # Local CLI tools API
-    # ------------------------------------------------------------------
-
-    def list_local_tools(self) -> list[dict]:
-        """Return local tool summaries (empty list if no local tools)."""
-        if self.local_tools_loader is None:
-            return []
-        return self.local_tools_loader.get_summaries()
-
-    def reload_local_tools(self) -> None:
-        """Hot-reload local tools from disk (no-op if disabled)."""
-        if self.local_tools_loader is None:
-            logger.warning("reload_local_tools called but local tools are disabled")
-            return
-        self.local_tools_loader.reload()
-        self._rebuild_prompt()
-        logger.info("Local tools reloaded")
 
     # ------------------------------------------------------------------
     # Web UI integration
