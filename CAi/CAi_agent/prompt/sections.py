@@ -26,17 +26,24 @@ INTERACTION MODES:
 
 HOW TO EXECUTE CODE:
 
-  Python (default):
+  Python (default — no attribute needed):
     <execute>
     print("hello")
     </execute>
 
-  Bash shell (add #!BASH on the first line):
-    <execute>
-    #!BASH
+  Bash shell:
+    <execute lang="bash">
     echo "hello"
     ls -l
     </execute>
+
+  R:
+    <execute lang="r">
+    library(dplyr)
+    </execute>
+
+  (Legacy syntax `#!BASH` / `#!R` on the first line is still recognised
+  for backward compatibility, but `lang="..."` is preferred.)
 
 CODE EXECUTION ENVIRONMENT STATE:
 - Persistent Jupyter IPython Kernel: The Python execution environment runs as a continuous, independent background process.

@@ -18,13 +18,17 @@ from __future__ import annotations
 
 import builtins
 import logging
-import re
 from collections.abc import Callable, Generator
 from threading import Lock
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from .agent_tags import (
+    has_execute_block,
+    iter_execute_blocks,
+    wrap_observation,
+)
 from .context_compression import hybrid_compress
 from .execution import (
     inject_custom_functions,
@@ -112,12 +116,16 @@ INTERACTION MODES:
 1. DIRECT RESPONSE: For questions, explanations, planning — just reply in plain text.
 2. CODE EXECUTION: When you need to compute, call tools, or interact with data,
    wrap your code in <execute>...</execute> tags. You'll see the output in <observation>.
+   The default language is Python. For shell commands or R, add a `lang` attribute:
+
+       <execute lang="bash">ls -la</execute>
+       <execute lang="r">library(dplyr)</execute>
+
 3. TASK COMPLETE: When finished, include <done/> at the end of your final message.
 
 RULES:
 - You can mix text and code in the same response.
 - Always print() results in code blocks so they appear in observations.
-- Python is the default. Use #!BASH prefix for shell commands.
 - Keep code simple. Break complex tasks into multiple steps.
 - If code fails, analyze the error before retrying."""
 
@@ -142,38 +150,50 @@ RULES:
 
     @staticmethod
     def _has_execute_block(content: str) -> bool:
-        return bool(re.search(r"<execute>.*?</execute>", content, re.DOTALL))
+        return has_execute_block(content)
 
     # ------------------------------------------------------------------
     # Code execution
     # ------------------------------------------------------------------
 
     def _run_code_blocks(self, content: str) -> str | None:
-        """Extract <execute>...</execute> blocks from `content`, run them,
-        and return the combined output wrapped in <observation> tags.
+        """Extract and run every ``<execute>`` block in ``content``.
 
-        Returns None if there were no code blocks.
+        Returns the combined output wrapped in ``<observation>`` tags,
+        or ``None`` if no blocks were found. Tools are injected into the
+        REPL **once per call** (not per block) — earlier versions
+        re-injected on every iteration which slowed multi-block messages.
         """
-        blocks = re.findall(r"<execute>(.*?)</execute>", content, re.DOTALL)
+        blocks = list(iter_execute_blocks(content))
         if not blocks:
             return None
 
-        results = []
+        results: list[str] = []
         with self._exec_lock:
-            for code in blocks:
-                code = code.strip()
-                if code.startswith("#!BASH"):
-                    script = code.replace("#!BASH", "", 1).strip()
-                    result = run_with_timeout(run_bash_script, [script], timeout=self.timeout_seconds)
+            python_injected = False
+            for block in blocks:
+                if block.lang == "bash":
+                    result = run_with_timeout(
+                        run_bash_script, [block.code], timeout=self.timeout_seconds
+                    )
+                elif block.lang == "r":
+                    # No first-class R runtime yet; surface a clear error
+                    # instead of mis-routing to Python.
+                    result = (
+                        "Error: R execution is not yet supported by this agent. "
+                        "Wrap R code in a bash invocation if Rscript is on PATH."
+                    )
                 else:
-                    self._inject_functions_to_repl()
-                    result = run_python_repl(code, timeout=self.timeout_seconds)
+                    if not python_injected:
+                        self._inject_functions_to_repl()
+                        python_injected = True
+                    result = run_python_repl(block.code, timeout=self.timeout_seconds)
                 results.append(result)
 
         combined = "\n".join(results)
         if len(combined) > 15000:
             combined = combined[:15000] + "\n\n[Output truncated — showing first 15K chars]"
-        return f"<observation>\n{combined}\n</observation>"
+        return wrap_observation(combined)
 
     def _inject_functions_to_repl(self):
         """Make registered tools callable from inside the REPL."""
@@ -226,7 +246,7 @@ RULES:
         response = self.llm.invoke(messages)
         content = self._normalize_content(response.content)
         # Repair unclosed <execute> (can happen with the </execute> stop sequence).
-        if "<execute>" in content and "</execute>" not in content:
+        if "<execute" in content and "</execute>" not in content:
             content += "</execute>"
         return content.strip()
 
@@ -254,7 +274,7 @@ RULES:
             return
 
         full = "".join(pieces).strip()
-        if "<execute>" in full and "</execute>" not in full:
+        if "<execute" in full and "</execute>" not in full:
             full += "</execute>"
         yield "final", full
 

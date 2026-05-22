@@ -77,19 +77,6 @@ separate OS process). This gives true timeout enforcement via SIGINT /
 SIGKILL, thread-safe output capture over ZeroMQ, and the ability to
 restart the kernel after a hang without touching the parent process.
 
-Python `<execute>` blocks call `run_python_repl(code, timeout)` directly
-(timeout enforced inside the kernel loop). Bash `<execute>#!BASH` blocks
-still go through `run_with_timeout(run_bash_script, ...)`.
-
-Tool functions are injected into the kernel via **cloudpickle**
-serialisation so closures and locally-defined callables work. The
-`builtins._base_CAi_custom_functions` registry is kept in sync for
-ReplBridge compatibility.
-
-`set_workspace_dir(path)` configures where matplotlib figures are
-auto-saved; new image files in the workspace are detected after each
-execution and reported in the output so the web UI can display them.
-
 See `docs/execution.md` for the full design and message-loop details.
 
 ### Interaction modes
@@ -97,11 +84,52 @@ See `docs/execution.md` for the full design and message-loop details.
 | Mode | When to use | How |
 |---|---|---|
 | Direct text | Questions, explanations, planning | Plain text reply |
-| Code execution | Compute, call tools, process data | `<execute>...</execute>` |
-| Bash execution | Shell commands | `<execute>#!BASH\n...</execute>` |
+| Code execution | Compute, call tools, process data | `<execute>...</execute>` (Python by default) |
+| Bash execution | Shell commands | `<execute lang="bash">...</execute>` |
+| R execution | R scripts | `<execute lang="r">...</execute>` |
 | Mixed | Explain + compute in one response | Text + `<execute>` block |
 
 The agent ends a task with `<done/>`. For simple questions it just replies directly.
+
+The legacy `#!BASH` / `#!R` shebangs on the first line of an attribute-less
+`<execute>` block are still recognised so existing conversation logs keep
+working, but new code should use the `lang="..."` attribute.
+
+### Tag parser — `agent_tags.py`
+
+`CAi/CAi_agent/agent_tags.py` is the **single source of truth** for the
+agent's tag syntax. Every consumer — `BaseAgent`, the web backend, the
+CLI, PDF export, `UtilityManager` — imports from this module instead of
+re-implementing the regexes locally. This avoids the historic class of
+bugs where one parser drifted from another (e.g. one accepting
+`#!BASH`, another not).
+
+Key entry points:
+- `iter_execute_blocks(content)` — yields `ExecuteBlock(lang, code, attrs)`
+- `has_execute_block(content)` — quick check during streaming loop
+- `strip_all_tags(content)` — produce a clean prose version
+- `wrap_observation(body)` — emit a well-formed `<observation>` tag
+
+Future-proof: the regex captures arbitrary `key="value"` attributes
+(see `parse_attrs`) so additions like `timeout="..."` or `id="..."`
+don't require a new parser.
+
+Python `<execute>` blocks call `run_python_repl(code, timeout)` directly
+(timeout enforced inside the kernel loop). Bash `<execute lang="bash">`
+blocks still go through `run_with_timeout(run_bash_script, ...)`.
+
+Tool functions are injected into the kernel via **cloudpickle**
+serialisation so closures and locally-defined callables work. The
+`builtins._base_CAi_custom_functions` registry is kept in sync for
+ReplBridge compatibility. Tools are now injected **once per
+`<execute>`-bearing message**, not per code block — multi-block messages
+no longer pay the IPC cost N times.
+
+`set_workspace_dir(path)` configures where matplotlib figures are
+auto-saved; new image files in the workspace are detected after each
+execution and reported in the output so the web UI can display them.
+
+See `docs/execution.md` for the full design and message-loop details.
 
 ### LangGraph state machine
 

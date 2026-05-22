@@ -21,6 +21,14 @@ import tempfile
 from datetime import datetime
 from typing import Any
 
+from CAi.CAi_agent.agent_tags import (
+    DONE_RE,
+    EXECUTE_RE,
+    OBSERVATION_RE,
+    detect_lang,
+    parse_attrs,
+)
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -98,9 +106,9 @@ def render_conversation_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
-_EXECUTE_RE = re.compile(r"<execute>(.*?)</execute>", re.DOTALL)
-_OBS_RE = re.compile(r"<observation>(.*?)</observation>", re.DOTALL)
-_DONE_RE = re.compile(r"<done\s*/?>")
+_EXECUTE_RE = EXECUTE_RE
+_OBS_RE = OBSERVATION_RE
+_DONE_RE = DONE_RE
 _IMAGE_LINE_RE = re.compile(r"\[Image saved\]:\s*(.+)", re.IGNORECASE)
 
 
@@ -113,20 +121,12 @@ def _reformat_agent_tags(text: str, workspace_dir: str | None = None) -> str:
     """
 
     def _code(match):
-        code = match.group(1).strip()
-        # Detect language from marker
-        if code.startswith("#!BASH"):
-            lang = "bash"
-            code = code.replace("#!BASH", "", 1).lstrip()
-        elif code.startswith("#!R"):
-            lang = "r"
-            code = code.replace("#!R", "", 1).lstrip()
-        else:
-            lang = "python"
+        attrs = parse_attrs(match.group("attrs") or "")
+        lang, code = detect_lang(match.group("code"), attrs.get("lang"))
         return f"\n```{lang}\n{code}\n```\n"
 
     def _obs(match):
-        body = match.group(1).strip()
+        body = match.group("body").strip()
         out_lines: list[str] = []
         text_buffer: list[str] = []
 

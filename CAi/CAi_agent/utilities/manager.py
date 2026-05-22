@@ -19,6 +19,12 @@ from datetime import datetime
 from pathlib import Path
 
 from .registry import UtilityRegistry
+from ..agent_tags import (
+    EXECUTE_RE,
+    OBSERVATION_RE,
+    iter_execute_blocks,
+    strip_done,
+)
 
 logger = logging.getLogger("CAi.utilities.manager")
 
@@ -287,13 +293,13 @@ class UtilityManager:
                 continue
             content = step.get("content", "")
 
-            # Find all <execute> blocks with their positions
-            exec_pattern = re.compile(r"<execute>(.*?)</execute>", re.DOTALL)
-            matches = list(exec_pattern.finditer(content))
+            # Use the central tag parser so we accept both new (lang="bash")
+            # and legacy (#!BASH) syntax uniformly.
+            matches = list(EXECUTE_RE.finditer(content))
 
             if not matches:
                 # Pure-text message after code blocks → likely the final summary
-                cleaned = re.sub(r"<done\s*/?>", "", content).strip()
+                cleaned = strip_done(content).strip()
                 if cleaned and blocks:
                     final_summary = cleaned
                 continue
@@ -305,24 +311,30 @@ class UtilityManager:
                 and session_log[i + 1].get("type") == "observation"
             ):
                 obs = session_log[i + 1].get("content", "")
-                # Strip <observation> tags if present
-                obs = re.sub(r"</?observation>", "", obs).strip()
+                # Strip <observation> tags if the runtime included them
+                obs = OBSERVATION_RE.sub(
+                    lambda m: m.group("body"), obs
+                ).strip()
+                # Also handle a plain </observation> if obs was already body-only
+                obs = obs.replace("<observation>", "").replace("</observation>", "").strip()
 
-            # Extract reasoning (text before first <execute>) and outcome (after last </execute>)
+            # Reasoning before first <execute>; outcome after last </execute>
             reasoning = content[: matches[0].start()].strip()
-            outcome = content[matches[-1].end():].strip()
-            outcome = re.sub(r"<done\s*/?>", "", outcome).strip()
+            outcome = strip_done(content[matches[-1].end():]).strip()
 
-            for j, m in enumerate(matches):
-                code = m.group(1).strip()
-                if not code or code.startswith("#!BASH"):
-                    continue
+            # Re-parse via iter_execute_blocks to honour lang=... and skip non-Python.
+            execute_blocks = list(iter_execute_blocks(content))
+            python_blocks = [
+                b for b in execute_blocks
+                if b.lang == "python" and b.code.strip()
+            ]
+            for j, block in enumerate(python_blocks):
                 blocks.append({
                     "reasoning": reasoning if j == 0 else "",
-                    "code": code,
+                    "code": block.code,
                     # All execute blocks in one message share the combined observation
                     "output": obs,
-                    "outcome": outcome if j == len(matches) - 1 else "",
+                    "outcome": outcome if j == len(python_blocks) - 1 else "",
                 })
 
         return {"blocks": blocks, "final_summary": final_summary}

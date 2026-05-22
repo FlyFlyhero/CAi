@@ -304,7 +304,9 @@ export function renderStreamingMessage(msgEl, fullContent, isStreaming = false) 
             }
 
             const status = inProgress ? `${statusRun} 执行中...${timeStr}` : `${statusOK}${timeStr}`;
-            const lang = detectCodeLanguage(seg.content);
+            // Prefer the lang attribute carried on the segment; fall back to
+            // heuristic detection only for legacy messages without `lang`.
+            const lang = seg.lang || detectCodeLanguage(seg.content);
             const highlighted = highlightCode(seg.content, lang);
             html += buildCollapsible(
                 `💻 执行代码${status}`,
@@ -380,11 +382,53 @@ export function renderStreamingMessage(msgEl, fullContent, isStreaming = false) 
 }
 
 // ========== Parsing ==========
+//
+// Tag syntax (mirrors CAi/CAi_agent/agent_tags.py):
+//   <execute lang="python">code</execute>
+//   <observation>output</observation>
+//   <done/>
+//
+// `lang` is optional (defaults to python). For backward compat, a
+// `#!BASH` / `#!R` shebang as the first non-blank line of an
+// attribute-less <execute> block is also accepted.
+
+const _ATTR_RE = /(\w+)="([^"]*)"/g;
+
+function _parseAttrs(attrStr) {
+    const out = {};
+    if (!attrStr) return out;
+    let m;
+    _ATTR_RE.lastIndex = 0;
+    while ((m = _ATTR_RE.exec(attrStr)) !== null) {
+        out[m[1]] = m[2];
+    }
+    return out;
+}
+
+function _detectLang(code, attrLang) {
+    if (attrLang) {
+        const normalized = attrLang.trim().toLowerCase();
+        if (["python", "bash", "r"].includes(normalized)) return normalized;
+        return "python";
+    }
+    const stripped = code.replace(/^[\s\n]+/, "");
+    if (/^#!BASH\b/i.test(stripped)) return "bash";
+    if (/^#!R\b/i.test(stripped)) return "r";
+    return "python";
+}
+
+function _stripLegacyShebang(code, lang) {
+    // Only strip when the shebang was used as an in-content marker.
+    if (lang === "bash") return code.replace(/^[\s\n]*#!BASH\s*\n?/i, "");
+    if (lang === "r") return code.replace(/^[\s\n]*#!R\s*\n?/i, "");
+    return code;
+}
 
 export function parseSegments(content) {
     const segs = [];
     const src = content.replace(/<done\s*\/?>/g, "");
-    const tagRe = /<(execute|observation)>/g;
+    // Capture optional attribute list on <execute>; <observation> has none.
+    const tagRe = /<(execute|observation)((?:\s+\w+="[^"]*")*)\s*>/g;
     let lastIndex = 0;
     let m;
 
@@ -393,23 +437,43 @@ export function parseSegments(content) {
             segs.push({ type: "text", content: src.slice(lastIndex, m.index) });
         }
         const tagName = m[1];
+        const attrs = _parseAttrs(m[2] || "");
         const closeTag = `</${tagName}>`;
-        const closeIdx = src.indexOf(closeTag, tagRe.lastIndex);
+        const bodyStart = tagRe.lastIndex;
+        const closeIdx = src.indexOf(closeTag, bodyStart);
+
         if (closeIdx === -1) {
-            segs.push({
-                type: tagName === "execute" ? "code" : "observation",
-                content: src.slice(tagRe.lastIndex),
-            });
+            // Unclosed tag (still streaming).
+            const rawBody = src.slice(bodyStart);
+            if (tagName === "execute") {
+                const lang = _detectLang(rawBody, attrs.lang);
+                segs.push({
+                    type: "code",
+                    lang,
+                    content: _stripLegacyShebang(rawBody, lang),
+                    attrs,
+                });
+            } else {
+                segs.push({ type: "observation", content: rawBody });
+            }
             lastIndex = src.length;
             break;
-        } else {
-            segs.push({
-                type: tagName === "execute" ? "code" : "observation",
-                content: src.slice(tagRe.lastIndex, closeIdx),
-            });
-            lastIndex = closeIdx + closeTag.length;
-            tagRe.lastIndex = lastIndex;
         }
+
+        const rawBody = src.slice(bodyStart, closeIdx);
+        if (tagName === "execute") {
+            const lang = _detectLang(rawBody, attrs.lang);
+            segs.push({
+                type: "code",
+                lang,
+                content: _stripLegacyShebang(rawBody, lang),
+                attrs,
+            });
+        } else {
+            segs.push({ type: "observation", content: rawBody });
+        }
+        lastIndex = closeIdx + closeTag.length;
+        tagRe.lastIndex = lastIndex;
     }
 
     if (lastIndex < src.length) {

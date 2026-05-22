@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 from collections.abc import AsyncGenerator
+
+from CAi.CAi_agent.agent_tags import (
+    EXECUTE_RE,
+    OBSERVATION_RE,
+    iter_execute_blocks,
+    strip_all_tags,
+)
 
 
 def build_prompt(text: str, ref_files: list[str], workspace_dir: str) -> str:
@@ -24,11 +30,7 @@ def build_prompt(text: str, ref_files: list[str], workspace_dir: str) -> str:
 
 def clean_stored_answer(full_content: str) -> str:
     """Strip internal execution tags so stored conversation reads as plain text."""
-    text = re.sub(r"<execute>.*?</execute>", "", full_content, flags=re.DOTALL)
-    text = re.sub(r"<observation>.*?</observation>", "", text, flags=re.DOTALL)
-    text = re.sub(r"<done\s*/?>", "", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return strip_all_tags(full_content)
 
 
 def extract_parts(content: str) -> dict:
@@ -38,30 +40,29 @@ def extract_parts(content: str) -> dict:
     """
     parts: dict = {}
 
-    has_execute = "<execute>" in content
-    has_observation = "<observation>" in content
+    has_execute = bool(EXECUTE_RE.search(content))
+    has_observation = bool(OBSERVATION_RE.search(content))
 
     if has_execute or has_observation:
+        # Earliest tag start: the prose before it is the agent's "thinking".
         tag_positions = [
-            content.find(tag)
-            for tag in ("<execute>", "<observation>")
-            if tag in content
-        ]
+            m.start() for m in EXECUTE_RE.finditer(content)
+        ] + [m.start() for m in OBSERVATION_RE.finditer(content)]
         if tag_positions:
             thinking = content[: min(tag_positions)].strip()
             if thinking:
                 parts["thinking"] = thinking
 
-    code_blocks = re.findall(r"<execute>(.*?)</execute>", content, re.DOTALL)
+    code_blocks = [b.code for b in iter_execute_blocks(content)]
     if code_blocks:
-        parts["code"] = "\n\n".join(b.strip() for b in code_blocks)
+        parts["code"] = "\n\n".join(code_blocks)
 
-    obs_blocks = re.findall(r"<observation>(.*?)</observation>", content, re.DOTALL)
+    obs_blocks = [m.group("body").strip() for m in OBSERVATION_RE.finditer(content)]
     if obs_blocks:
-        parts["observation"] = "\n\n".join(b.strip() for b in obs_blocks)
+        parts["observation"] = "\n\n".join(obs_blocks)
 
     if "code" not in parts and "observation" not in parts:
-        cleaned = re.sub(r"<done\s*/?>", "", content).strip()
+        cleaned = strip_all_tags(content)
         if cleaned:
             parts["text"] = cleaned
 

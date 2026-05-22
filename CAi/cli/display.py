@@ -99,7 +99,7 @@ def display_observation(content: str) -> None:
             display_text,
             title="[bold cai.cyan]⚙ Output[/bold cai.cyan]",
             title_align="left",
-            border_style="cai.border",
+            border_style="#3e4452",
             box=box.ROUNDED,
             padding=(0, 1),
         )
@@ -125,7 +125,7 @@ def display_full_observation(raw_log: list[dict]) -> None:
             title_align="left",
             subtitle="[cai.dim]:last_obs to view again[/cai.dim]",
             subtitle_align="right",
-            border_style="cai.border",
+            border_style="#3e4452",
             box=box.HEAVY_HEAD,
             padding=(1, 2),
         )
@@ -188,7 +188,7 @@ def display_conversations(convs: list[dict]) -> None:
     console.print()
     table = Table(
         box=box.SIMPLE_HEAVY,
-        border_style="cai.border",
+        border_style="#3e4452",
         title="[bold cai.secondary]Sessions[/bold cai.secondary]",
         title_justify="left",
         show_edge=False,
@@ -196,10 +196,10 @@ def display_conversations(convs: list[dict]) -> None:
         padding=(0, 1),
     )
 
-    table.add_column("Updated", style="cai.dim", width=12)
-    table.add_column("ID", style="cai.primary", max_width=12)
-    table.add_column("Title", style="cai.text")
-    table.add_column("Msgs", justify="right", style="cai.dim", width=5)
+    table.add_column("Updated", style="#5c6370", width=12)
+    table.add_column("ID", style="bold #61afef", max_width=12)
+    table.add_column("Title", style="#abb2bf")
+    table.add_column("Msgs", justify="right", style="#5c6370", width=5)
 
     for c in convs[:15]:
         ts = c.get("updated_at", "")[:10]
@@ -250,12 +250,12 @@ def display_help() -> None:
     table = Table(
         box=box.SIMPLE,
         show_header=False,
-        border_style="cai.border",
+        border_style="#3e4452",
         padding=(0, 2),
         pad_edge=True,
     )
-    table.add_column("Command", style="bold cai.cyan", min_width=18)
-    table.add_column("Description", style="cai.text")
+    table.add_column("Command", style="bold #56b6c2", min_width=18)
+    table.add_column("Description", style="#abb2bf")
 
     for cmd, desc in commands:
         table.add_row(cmd, desc)
@@ -265,7 +265,7 @@ def display_help() -> None:
             table,
             title="[bold cai.secondary]Commands[/bold cai.secondary]",
             title_align="left",
-            border_style="cai.border",
+            border_style="#3e4452",
             box=box.ROUNDED,
             padding=(0, 1),
             expand=False,
