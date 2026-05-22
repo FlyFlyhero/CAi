@@ -8,7 +8,24 @@ from rich.text import Text
 from rich.style import Style
 from rich.color import Color
 
+from CAi.CAi_agent.agent_tags import OBSERVATION_RE, strip_all_tags
 from CAi.cli.theme import console
+
+
+def _strip_observation_tags(text: str) -> str:
+    """Strip ``<observation>...</observation>`` wrappers, leaving the body.
+
+    Goes through :data:`agent_tags.OBSERVATION_RE` so the CLI stays in
+    lock-step with the rest of the system and any future attributes
+    keep working.
+    """
+    if not text:
+        return ""
+    match = OBSERVATION_RE.search(text)
+    if match:
+        return match.group("body").strip()
+    # Either plain text, or a malformed/partial tag.
+    return strip_all_tags(text).strip()
 
 
 
@@ -80,7 +97,7 @@ def print_resumed_info(turn_count: int) -> None:
 
 def display_observation(content: str) -> None:
     """Display execution output — shows the full result of code execution."""
-    clean = content.replace("<observation>", "").replace("</observation>", "").strip()
+    clean = _strip_observation_tags(content)
     if not clean:
         console.print("   [cai.cyan]⚙[/cai.cyan] [cai.dim](no output)[/cai.dim]")
         return
@@ -115,7 +132,7 @@ def display_full_observation(raw_log: list[dict]) -> None:
         return
     
     last = observations[-1]["content"]
-    clean = last.replace("<observation>", "").replace("</observation>", "").strip()
+    clean = _strip_observation_tags(last)
 
     console.print()
     console.print(
