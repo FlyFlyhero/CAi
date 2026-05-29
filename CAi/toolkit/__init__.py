@@ -19,7 +19,15 @@ How to add a new tool:
 """
 
 from .functions import (
+    analyze_abfe_results,
     calculate_scscore,
+    deepchem_molgan_generate,
+    deepchem_molgan_train,
+    deepchem_seq2seq_evaluate,
+    deepchem_seq2seq_train,
+    drugex_finetune,
+    drugex_generate,
+    drugex_rl,
     generate_libinvent_decorations,
     generate_molecules_for_pocket,
     generate_molecules_reinvent4_denovo,
@@ -31,17 +39,31 @@ from .functions import (
     perform_molecular_docking_vina,
     predict_antibacterial_pmic,
     predict_molecule_toxicity,
+    prepare_abfe_fep,
+    run_abfe_fep,
+    run_abfe_legs,
     run_gromacs_md,
 )
 from .skill_helpers import get_skill_content, list_available_skills
 
 __all__ = [
     # evaluation
+    "analyze_abfe_results",
     "calculate_scscore",
     "perform_molecular_docking_vina",
     "predict_antibacterial_pmic",
     "predict_molecule_toxicity",
+    "prepare_abfe_fep",
+    "run_abfe_fep",
+    "run_abfe_legs",
     # generation
+    "deepchem_molgan_generate",
+    "deepchem_molgan_train",
+    "deepchem_seq2seq_evaluate",
+    "deepchem_seq2seq_train",
+    "drugex_finetune",
+    "drugex_generate",
+    "drugex_rl",
     "generate_libinvent_decorations",
     "generate_molecules_for_pocket",
     "generate_molecules_reinvent4_denovo",

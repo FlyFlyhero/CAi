@@ -1,0 +1,11 @@
+{
+  "name": "deepchem",
+  "conda_env": "DeepChem",
+  "gpu": true,
+  "actions": {
+    "seq2seq_train": "run_seq2seq_train.py",
+    "seq2seq_evaluate": "run_seq2seq_evaluate.py",
+    "molgan_train": "run_molgan_train.py",
+    "molgan_generate": "run_molgan_generate.py"
+  }
+}

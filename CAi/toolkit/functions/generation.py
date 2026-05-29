@@ -463,6 +463,482 @@ def generate_molecules_reinvent4_libinvent(smiles: str, num_variants: int = 50) 
     }
 
 
+def drugex_finetune(
+    base_dir: str | None = None,
+    input_prefix: str = "arl",
+    output_prefix: str | None = None,
+    agent_path: str | None = None,
+    mol_type: str = "graph",
+    algorithm: str = "trans",
+    epochs: int = 2,
+    batch_size: int = 32,
+    gpu: str = "0",
+) -> dict:
+    """Fine-tune a pre-trained DrugEx generator model on a custom dataset.
+
+    Use this when you have a dataset of molecules and want to adapt a
+    pre-trained model to generate similar compounds. Must be run before
+    `drugex_rl` (the RL step requires a fine-tuned agent model).
+
+    Args:
+        base_dir:      Base directory containing DrugEx data/models. Uses default
+                       from paths.json if not provided.
+        input_prefix:  Prefix for input data files (default "arl").
+        output_prefix: Prefix for output model name (default: same as input_prefix).
+        agent_path:    Path to pre-trained model (.pkg). Uses default from paths.json.
+        mol_type:      Molecule representation: "graph" or "smiles" (default "graph").
+        algorithm:     Architecture: "trans" (transformer) or "rnn" (default "trans").
+        epochs:        Training epochs (default 2).
+        batch_size:    Batch size (default 32).
+        gpu:           GPU device IDs, comma-separated (default "0").
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "finetune",
+            "output_model": str,      # path to the fine-tuned .pkg model
+            "output_name": str,       # model identifier (e.g. "arl_graph_trans_FT")
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    payload: dict = {
+        "mol_type": mol_type,
+        "algorithm": algorithm,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "gpu": gpu,
+    }
+    if base_dir is not None:
+        payload["base_dir"] = base_dir
+    payload["input"] = input_prefix
+    if output_prefix is not None:
+        payload["output"] = output_prefix
+    if agent_path is not None:
+        payload["agent_path"] = agent_path
+
+    result = run_tool("drugex", payload, action="finetune", timeout_mins=60)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "Finetune failed for unknown reason")}
+
+    summary = result.get("summary", {})
+    return {
+        "success": True,
+        "mode": "finetune",
+        "output_model": summary.get("output_model", ""),
+        "output_model_found": summary.get("output_model_found", False),
+        "output_name": result.get("results", {}).get("output_name", ""),
+    }
+
+
+def drugex_rl(
+    base_dir: str | None = None,
+    input_prefix: str = "arl",
+    output_prefix: str | None = None,
+    agent_path: str | None = None,
+    prior_path: str | None = None,
+    predictor: list[str] | None = None,
+    active_targets: list[str] | None = None,
+    mol_type: str = "graph",
+    algorithm: str = "trans",
+    epochs: int = 2,
+    batch_size: int = 32,
+    gpu: str = "0",
+    scheme: str = "PRCD",
+) -> dict:
+    """Run reinforcement learning (RL) on a fine-tuned DrugEx generator.
+
+    Uses QSAR predictors as reward signals to steer molecule generation
+    toward desired properties. Requires a fine-tuned agent model (from
+    `drugex_finetune`).
+
+    Args:
+        base_dir:       Base directory. Uses default from paths.json if not provided.
+        input_prefix:   Prefix for input data (default "arl").
+        output_prefix:  Prefix for output model name (default: same as input_prefix).
+        agent_path:     Path to fine-tuned agent model (name or path). Uses paths.json default.
+        prior_path:     Path to pre-trained prior model. Uses paths.json default.
+        predictor:      List of QSAR predictor paths for reward. Uses paths.json default.
+        active_targets: Target names to activate (default ["A2AR_RandomForestClassifier"]).
+        mol_type:       "graph" or "smiles" (default "graph").
+        algorithm:      "trans" or "rnn" (default "trans").
+        epochs:         Training epochs (default 2).
+        batch_size:     Batch size (default 32).
+        gpu:            GPU device IDs (default "0").
+        scheme:         RL reward scheme (default "PRCD").
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "rl",
+            "output_model": str,      # path to the RL-trained .pkg model
+            "output_name": str,       # model identifier (e.g. "arl_graph_trans_RL")
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    payload: dict = {
+        "mol_type": mol_type,
+        "algorithm": algorithm,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "gpu": gpu,
+        "scheme": scheme,
+    }
+    if base_dir is not None:
+        payload["base_dir"] = base_dir
+    payload["input"] = input_prefix
+    if output_prefix is not None:
+        payload["output"] = output_prefix
+    if agent_path is not None:
+        payload["agent_path"] = agent_path
+    if prior_path is not None:
+        payload["prior_path"] = prior_path
+    if predictor is not None:
+        payload["predictor"] = predictor
+    if active_targets is not None:
+        payload["active_targets"] = active_targets
+
+    result = run_tool("drugex", payload, action="rl", timeout_mins=120)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "RL training failed for unknown reason")}
+
+    summary = result.get("summary", {})
+    return {
+        "success": True,
+        "mode": "rl",
+        "output_model": summary.get("output_model", ""),
+        "output_model_found": summary.get("output_model_found", False),
+        "output_name": result.get("results", {}).get("output_name", ""),
+    }
+
+
+def drugex_generate(
+    base_dir: str | None = None,
+    generator: str = "arl_graph_trans_RL",
+    input_fragments: str | None = None,
+    num_samples: int = 100,
+    batch_size: int = 128,
+    gpu: str = "0",
+    voc_files: list[str] | None = None,
+) -> dict:
+    """Generate molecules using a trained DrugEx generator model.
+
+    Takes fragment inputs and produces new molecules conditioned on those
+    fragments and the trained model's learned distribution. Use this after
+    running `drugex_finetune` + `drugex_rl` to get a reward-optimized model.
+
+    Args:
+        base_dir:         Base directory. Uses default from paths.json.
+        generator:        Name of trained generator model (default "arl_graph_trans_RL").
+        input_fragments:  Input fragment file name. Uses paths.json default.
+        num_samples:      Number of molecules to generate (default 100).
+        batch_size:       Generation batch size (default 128).
+        gpu:              GPU device IDs (default "0").
+        voc_files:        Vocabulary file list. Default ["smiles"].
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "generate",
+            "total_molecules_generated": int,
+            "molecules": [{"smiles": str, ...}, ...],  # preview of generated molecules
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    payload: dict = {
+        "generator": generator,
+        "num_samples": num_samples,
+        "batch_size": batch_size,
+        "gpu": gpu,
+    }
+    if base_dir is not None:
+        payload["base_dir"] = base_dir
+    if input_fragments is not None:
+        payload["input_fragments"] = input_fragments
+    if voc_files is not None:
+        payload["voc_files"] = voc_files
+
+    result = run_tool("drugex", payload, action="generate", timeout_mins=30)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "Generation failed for unknown reason")}
+
+    summary = result.get("summary", {})
+    results = result.get("results", {})
+    return {
+        "success": True,
+        "mode": "generate",
+        "generator_model": summary.get("generator_model", generator),
+        "total_molecules_generated": summary.get("total_molecules_generated", 0),
+        "molecules": results.get("molecules_preview", []),
+    }
+
+
+def deepchem_seq2seq_train(
+    dataset_name: str = "muv",
+    epochs: int = 2,
+    batch_size: int = 100,
+    embedding_dimension: int = 256,
+    encoder_layers: int = 2,
+    decoder_layers: int = 2,
+) -> dict:
+    """Train a Seq2Seq autoencoder on molecular SMILES data.
+
+    Learns fixed-length vector representations (embeddings) of molecules.
+    The trained model can be used for downstream tasks via
+    `deepchem_seq2seq_evaluate`.
+
+    Args:
+        dataset_name:          Dataset to train on. Currently only "muv" is supported.
+        epochs:                Training epochs (default 2).
+        batch_size:            Batch size (default 100).
+        embedding_dimension:   Latent vector dimension (default 256).
+        encoder_layers:        Number of encoder RNN layers (default 2).
+        decoder_layers:        Number of decoder RNN layers (default 2).
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "seq2seq_train",
+            "dataset": str,
+            "train_samples": int,
+            "valid_samples": int,
+            "epochs": int,
+            "reconstruction_accuracy": float,
+            "model_dir": str,
+            "tokens_file": str,
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    if dataset_name != "muv":
+        return {"success": False, "error": "Only dataset_name='muv' is currently supported."}
+
+    payload = {
+        "dataset_name": dataset_name,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "embedding_dimension": embedding_dimension,
+        "encoder_layers": encoder_layers,
+        "decoder_layers": decoder_layers,
+    }
+    result = run_tool("deepchem", payload, action="seq2seq_train", timeout_mins=30)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "Seq2Seq training failed")}
+
+    summary = result.get("summary", {})
+    results = result.get("results", {})
+    return {
+        "success": True,
+        "mode": "seq2seq_train",
+        "dataset": summary.get("dataset", dataset_name),
+        "train_samples": summary.get("train_samples"),
+        "valid_samples": summary.get("valid_samples"),
+        "epochs": summary.get("epochs", epochs),
+        "reconstruction_accuracy": summary.get("reconstruction_accuracy", 0.0),
+        "model_dir": results.get("model_dir"),
+        "tokens_file": results.get("tokens_file"),
+    }
+
+
+def deepchem_seq2seq_evaluate(
+    dataset_name: str = "muv",
+    classifier_epochs: int = 3,
+    batch_size: int = 100,
+    embedding_dimension: int = 256,
+    encoder_layers: int = 2,
+    decoder_layers: int = 2,
+) -> dict:
+    """Evaluate a trained Seq2Seq model by training a downstream classifier.
+
+    Loads the Seq2Seq model trained by `deepchem_seq2seq_train`, generates
+    embeddings for train/valid datasets, and trains a multitask classifier.
+    Returns ROC-AUC scores as a measure of embedding quality.
+
+    Args:
+        dataset_name:          Dataset name. Currently only "muv".
+        classifier_epochs:     Epochs for downstream classifier training (default 3).
+        batch_size:            Batch size (default 100).
+        embedding_dimension:   Must match the trained Seq2Seq model (default 256).
+        encoder_layers:        Must match the trained Seq2Seq model (default 2).
+        decoder_layers:        Must match the trained Seq2Seq model (default 2).
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "seq2seq_evaluate",
+            "dataset": str,
+            "num_tasks": int,
+            "classifier_epochs": int,
+            "train_roc_auc": float,
+            "valid_roc_auc": float,
+            "embeddings_train_shape": [int, int],
+            "embeddings_valid_shape": [int, int],
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    if dataset_name != "muv":
+        return {"success": False, "error": "Only dataset_name='muv' is currently supported."}
+
+    payload = {
+        "dataset_name": dataset_name,
+        "classifier_epochs": classifier_epochs,
+        "batch_size": batch_size,
+        "embedding_dimension": embedding_dimension,
+        "encoder_layers": encoder_layers,
+        "decoder_layers": decoder_layers,
+    }
+    result = run_tool("deepchem", payload, action="seq2seq_evaluate", timeout_mins=30)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "Seq2Seq evaluation failed")}
+
+    summary = result.get("summary", {})
+    results = result.get("results", {})
+    emb_shape = results.get("embeddings_shape", {})
+    return {
+        "success": True,
+        "mode": "seq2seq_evaluate",
+        "dataset": summary.get("dataset", dataset_name),
+        "num_tasks": summary.get("tasks"),
+        "classifier_epochs": summary.get("classifier_epochs", classifier_epochs),
+        "train_roc_auc": summary.get("train_roc_auc"),
+        "valid_roc_auc": summary.get("valid_roc_auc"),
+        "embeddings_train_shape": emb_shape.get("train"),
+        "embeddings_valid_shape": emb_shape.get("valid"),
+    }
+
+
+def deepchem_molgan_train(
+    dataset_name: str = "tox21",
+    num_atoms: int = 12,
+    epochs: int = 5,
+    atom_labels: list | None = None,
+) -> dict:
+    """Train a MolGAN model to generate small molecules.
+
+    MolGAN is a generative adversarial network that produces molecular
+    graphs. The trained model can be used for molecule generation via
+    `deepchem_molgan_generate`.
+
+    Args:
+        dataset_name: Dataset to train on. Currently only "tox21".
+        num_atoms:    Maximum number of atoms in generated molecules (default 12).
+        epochs:       Training epochs (default 5).
+        atom_labels:  List of atom types to include. Default: [0,5,6,7,8,9,11,12,13,14].
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "molgan_train",
+            "dataset": str,
+            "training_samples": int,
+            "epochs": int,
+            "num_atoms": int,
+            "model_path": str,
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    if dataset_name != "tox21":
+        return {"success": False, "error": "Only dataset_name='tox21' is currently supported."}
+
+    payload: dict = {
+        "dataset_name": dataset_name,
+        "num_atoms": num_atoms,
+        "epochs": epochs,
+    }
+    if atom_labels is not None:
+        payload["atom_labels"] = atom_labels
+
+    result = run_tool("deepchem", payload, action="molgan_train", timeout_mins=30)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "MolGAN training failed")}
+
+    summary = result.get("summary", {})
+    results = result.get("results", {})
+    return {
+        "success": True,
+        "mode": "molgan_train",
+        "dataset": summary.get("dataset", dataset_name),
+        "training_samples": summary.get("training_samples"),
+        "epochs": summary.get("epochs", epochs),
+        "num_atoms": summary.get("num_atoms", num_atoms),
+        "model_path": results.get("model_path"),
+    }
+
+
+def deepchem_molgan_generate(
+    num_samples: int = 100,
+    num_atoms: int = 12,
+    atom_labels: list | None = None,
+) -> dict:
+    """Generate molecules using a trained MolGAN model.
+
+    Requires that `deepchem_molgan_train` has been run first.
+
+    Args:
+        num_samples:  Number of molecules to attempt generation (default 100).
+        num_atoms:    Must match the trained model's num_atoms (default 12).
+        atom_labels:  Must match the trained model's atom_labels.
+
+    Returns:
+        On success:
+          {
+            "success": True,
+            "mode": "molgan_generate",
+            "total_generated": int,
+            "valid_molecules": int,
+            "unique_molecules": int,
+            "smiles": [str, ...],   # preview of valid SMILES
+          }
+        On error:
+          {"success": False, "error": str}
+    """
+    payload: dict = {
+        "num_samples": num_samples,
+        "num_atoms": num_atoms,
+    }
+    if atom_labels is not None:
+        payload["atom_labels"] = atom_labels
+
+    result = run_tool("deepchem", payload, action="molgan_generate", timeout_mins=10)
+    if result.get("error"):
+        return {"success": False, "error": result["error"]}
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "MolGAN generation failed")}
+
+    summary = result.get("summary", {})
+    results = result.get("results", {})
+    return {
+        "success": True,
+        "mode": "molgan_generate",
+        "total_generated": summary.get("total_generated"),
+        "valid_molecules": summary.get("valid_molecules"),
+        "unique_molecules": summary.get("unique_molecules"),
+        "smiles": results.get("smiles_preview", []),
+    }
+
+
 def generate_molecules_reinvent4_mol2mol(
     smiles: str,
     num_variants: int = 50,

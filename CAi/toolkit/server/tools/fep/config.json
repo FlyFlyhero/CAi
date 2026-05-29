@@ -1,0 +1,11 @@
+{
+	"name": "fep",
+	"conda_env": "fep",
+	"gpu": true,
+	"actions": {
+		"default": "run.py",
+		"prepare": "prepare.py",
+		"run": "run_legs.py",
+		"analyze": "analyze.py"
+	}
+}

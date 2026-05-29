@@ -1,8 +1,10 @@
 {
   "name": "drugex",
-  "conda_env": "drugex", 
+  "conda_env": "drugex",
   "gpu": true,
   "actions": {
-    "generate": "generate_molecule.py"
+    "finetune": "run_finetune.py",
+    "rl":       "run_rl.py",
+    "generate": "run_generate.py"
   }
 }

@@ -1,0 +1,9 @@
+{
+    "base_dir": "/mnt/shared-storage-gpfs2/chenjiangyu-gpfs02/CAi_copilot/CAi/toolkit/server/tools/drugex/DrugEx/tutorial/CLI/examples",
+    "drugex_repo_dir": "/mnt/shared-storage-gpfs2/chenjiangyu-gpfs02/CAi_copilot/CAi/toolkit/server/tools/drugex/DrugEx",
+    "pretrained_model_graph": "/mnt/shared-storage-gpfs2/chenjiangyu-gpfs02/CAi_copilot/CAi/toolkit/server/tools/drugex/DrugEx/tutorial/CLI/examples/models/pretrained/graph-trans/Papyrus05.5_graph_trans_PT/Papyrus05.5_graph_trans_PT.pkg",
+    "pretrained_model_rnn": "/mnt/shared-storage-gpfs2/chenjiangyu-gpfs02/CAi_copilot/CAi/toolkit/server/tools/drugex/DrugEx/tutorial/CLI/examples/models/pretrained/smiles-rnn/Papyrus05.5_smiles_rnn_PT/Papyrus05.5_smiles_rnn_PT.pkg",
+    "qsar_model_a2ar": "/mnt/shared-storage-gpfs2/chenjiangyu-gpfs02/CAi_copilot/CAi/toolkit/server/tools/drugex/DrugEx/tutorial/CLI/examples/models/qsar/A2AR_RandomForestClassifier/A2AR_RandomForestClassifier_meta.json",
+    "default_input_prefix": "arl",
+    "default_test_fragments": "arl_test_graph.txt"
+}

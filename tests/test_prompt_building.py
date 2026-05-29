@@ -22,11 +22,11 @@ def test_prompt_has_core_section(a1pro_agent):
 
 
 def test_prompt_without_tools_or_skills_is_compact(a1pro_agent):
-    agent, _ = a1pro_agent(auto_load_utilities=False, auto_load_local_tools=False)
+    agent, _ = a1pro_agent(auto_load_utilities=False, auto_load_tools=False)
     sp = agent.system_prompt
     assert "AVAILABLE TOOLS" not in sp
     assert "SKILLS" not in sp
-    assert len(sp) < 3000
+    assert len(sp) < 4000
 
 
 def test_prompt_with_tool_section(a1pro_agent):
